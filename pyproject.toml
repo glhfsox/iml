@@ -1,0 +1,78 @@
+[project]
+name = "iml"
+version = "0.1.0"
+description = "IML 2026/27: voice intercom speaker verification on spectrograms with CNNs"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "torch>=2.9.1,<2.10",
+    "torchaudio>=2.9.1,<2.10",
+    "torchvision>=0.24,<0.25",
+    "soundfile>=0.12",
+    "pytorch-triton-rocm>=3.4 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "matplotlib>=3.9",
+    "scikit-learn>=1.5",
+    "tqdm>=4.66",
+    "mlflow>=2.16",
+    "jupyter>=1.1",
+    "ipykernel>=6.29",
+    "tabulate>=0.9",
+]
+
+[project.scripts]
+iml-train = "iml.cli.train:main"
+iml-sweep = "iml.cli.sweep:main"
+iml-compare = "iml.cli.compare:main"
+iml-export = "iml.cli.export:main"
+
+[dependency-groups]
+export = [
+    "onnx>=1.16",
+    "onnxruntime>=1.18",
+]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.6",
+    "nbstripout>=0.7",
+    "nbconvert>=7.16",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/iml"]
+
+# --- PyTorch: HIP/ROCm wheels (AMD GPU) on the Linux training server, PyPI (CPU/MPS) on macOS ---
+# Set the ROCm version to what `rocminfo` / `rocm-smi --showversion` reports on the server.
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm6.4"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-rocm", marker = "sys_platform == 'linux'" }]
+torchaudio = [{ index = "pytorch-rocm", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-rocm", marker = "sys_platform == 'linux'" }]
+pytorch-triton-rocm = [{ index = "pytorch-rocm", marker = "sys_platform == 'linux'" }]
+
+[tool.uv]
+environments = [
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["slow: needs a few seconds (mlflow sqlite migrations)"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["*.ipynb"]  # notebooks put sys.path setup before imports on purpose
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

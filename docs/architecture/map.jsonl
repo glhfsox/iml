@@ -1,0 +1,31 @@
+{"id":"config","kind":"module","area":"iml","files":["src/iml/config.py","configs/"],"in":["config json","key=value overrides"],"out":["ExperimentConfig","run_name"],"purpose":"One dataclass with every experiment knob; JSON round-trip and a run name derived from non-default fields plus a hash","symbols":["class ExperimentConfig","def run_name"]}
+{"id":"models","kind":"module","area":"iml","files":["src/iml/models/","src/iml/models/__init__.py"],"in":["ExperimentConfig"],"out":["nn.Module (B,1,n_mels,T)->(B,2)"],"purpose":"Registry of the five CNNs under comparison: SimpleCNN, PANNs CNN10, ResNet-18, MobileNetV2, ECAPA-TDNN, all 1-channel spectrogram in, 2 logits out","symbols":["def build_model"]}
+{"id":"audio_data","kind":"module","area":"iml","files":["src/iml/data/","src/iml/data/dataset.py","src/iml/data/spectrogram.py"],"in":["wav files","ExperimentConfig"],"out":["log-mel tensors","DataLoaders"],"purpose":"Waveform I/O, cropping, log-mel spectrogram with input normalisation, SpectrogramDataset (real) and DummyDataset (synthetic smoke data)","symbols":["class LogMelSpectrogram","class SpectrogramDataset","class DummyDataset","def make_loaders"]}
+{"id":"metrics","kind":"module","area":"iml","files":["src/iml/metrics.py"],"in":["labels","scores"],"out":["FAR","FRR","EER","macro-F1"],"purpose":"Project metrics: false acceptance / false rejection ratios, EER threshold sweep, accuracy and macro-F1","symbols":["def far","def frr","def eer"]}
+{"id":"trainer","kind":"module","area":"iml","files":["src/iml/train.py","src/iml/device.py","src/iml/seed.py"],"in":["ExperimentConfig","DataLoaders"],"out":["run folder","RunRecord"],"purpose":"The single shared training loop: optimizer/scheduler from config, GPU AMP (HIP or CUDA), early stopping, best/last checkpoints, MC-dropout eval per split","symbols":["def fit","def predict_proba"]}
+{"id":"runs_store","kind":"module","area":"iml","files":["src/iml/runs.py"],"in":["history","metrics","state_dict"],"out":["config.json","metrics.json","history.csv","loss.png","best.pt","env.json"],"purpose":"Layout of runs/<member>/<topic>/<run_name>/ and reading finished runs back as RunRecord","symbols":["def run_dir","def load_run","def find_runs"]}
+{"id":"tracking","kind":"module","area":"iml","files":["src/iml/tracking.py"],"in":["ExperimentConfig","epoch metrics"],"out":["MLflow run"],"purpose":"Optional MLflow mirror of each run, active only when MLFLOW_TRACKING_URI is set","symbols":["class Tracker"]}
+{"id":"cli","kind":"script","area":"iml","files":["src/iml/cli/","src/iml/cli/sweep.py","src/iml/cli/compare.py","src/iml/cli/export.py","Makefile"],"in":["config json","grid json","runs/"],"out":["run folders","comparison table and plots"],"purpose":"Headless entry points: iml-train (one run), iml-sweep (grid), iml-compare (table + curves), iml-export (ONNX)","symbols":["def expand_grid","def summary_table"]}
+{"id":"run_folder","kind":"artifact","area":"iml","purpose":"runs/<member>/<topic>/<run_name>/: config.json, metrics.json, history.csv, plots, best.pt, last.pt, env.json, model.onnx; weights gitignored"}
+{"id":"mlflow","kind":"external","area":"iml","purpose":"MLflow server on the training box (sqlite backend, reached through an ssh tunnel) for searching and comparing runs"}
+{"id":"app","kind":"module","area":"app","files":["app/main.py","app/models/__init__.py","app/models/utils.py"],"in":["best.pt","wav or waveform"],"out":["Verdict (class, confidence, MC std)"],"purpose":"Production entry point: resolve a frozen model folder or run, build its pipeline, classify a recording","symbols":["def load_model","class Recognizer"]}
+{"id":"model_folders","kind":"module","area":"app","files":["app/models/speaker_verification/","app/models/speaker_verification/contracts.py","app/models/README.md"],"in":["ExperimentConfig","nn.Module"],"out":["Pipeline","Verdict"],"purpose":"One folder per architecture: pipeline/operators.py (transform -> infer -> decode), transform.py, frozen config.json/best.pt/model.onnx","symbols":["class Verdict"]}
+{"id":"notebooks","kind":"module","area":"notebooks","files":["notebooks/_template/","notebooks/glhfsox/"],"in":["ExperimentConfig list"],"out":["run folders","comparison table and plots"],"purpose":"Per-member notebooks: comparisons/<topic>/experiments.ipynb runs fit() for several configs and compares them; main.py calls the app"}
+{"id":"tests","kind":"ci","area":"tests","files":["tests/"],"purpose":"pytest: config round-trip, metrics on hand-computed cases, forward/backward of all five models, data shapes, end-to-end smoke training with MLflow"}
+{"from":"config","to":"models","data":"ExperimentConfig"}
+{"from":"config","to":"audio_data","data":"spectrogram and excerpt settings"}
+{"from":"audio_data","to":"trainer","data":"DataLoaders of (spec, label)"}
+{"from":"models","to":"trainer","data":"nn.Module"}
+{"from":"metrics","to":"trainer","data":"FAR/FRR/EER per split"}
+{"from":"trainer","to":"runs_store","data":"history, metrics, checkpoints"}
+{"from":"runs_store","to":"run_folder","data":"json/csv/png/pt files"}
+{"from":"trainer","to":"tracking","data":"params, epoch metrics, artifacts"}
+{"from":"tracking","to":"mlflow","data":"MLflow run"}
+{"from":"cli","to":"trainer","data":"ExperimentConfig + loaders"}
+{"from":"run_folder","to":"cli","data":"RunRecords for iml-compare, best.pt for iml-export"}
+{"from":"notebooks","to":"trainer","data":"ExperimentConfig + loaders"}
+{"from":"run_folder","to":"notebooks","data":"RunRecords for comparison"}
+{"from":"run_folder","to":"model_folders","data":"best.pt + config.json (make freeze)"}
+{"from":"model_folders","to":"app","data":"build_pipeline"}
+{"from":"audio_data","to":"app","data":"load_wav, LogMelSpectrogram"}
+{"from":"notebooks","to":"app","data":"main.py demo call"}
