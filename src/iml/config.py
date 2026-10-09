@@ -52,6 +52,7 @@ class ExperimentConfig:
     n_mels: int = 64
     normalize_input: str = "per_sample"  # none | per_sample | global
     augment: dict[str, Any] = field(default_factory=dict)  # see iml.data.augment (later)
+    dataset_id: str = ""  # fingerprint of the exact real-data split; set by iml-train
 
     # --- optimisation ---
     optimizer: str = "adam"  # sgd | adam | adamw

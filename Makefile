@@ -1,8 +1,12 @@
 # Common commands. Set SERVER to the ssh host of the training box (see ~/.ssh/config).
 SERVER ?= server
 REMOTE_DIR ?= ~/iml
+START ?= 2025-10-01
+END ?= 2026-10-07
+CHATS ?= 3
+TARGET ?= speaker_01
 
-.PHONY: install test lint smoke sync pull-runs mlflow-ui export export-all freeze configs
+.PHONY: install test lint smoke data-doctor data-rank data-pilot data-prepare sync pull-runs mlflow-ui export export-all freeze configs
 
 install:            ## create .venv with all deps (HIP/ROCm torch on the linux server, PyPI torch on macOS)
 	uv sync --group dev
@@ -17,6 +21,18 @@ smoke:              ## end-to-end on synthetic data, then compare the runs
 	uv run iml-train --config configs/simple_cnn.json --dummy --set epochs=3 --member smoke --topic dummy
 	uv run iml-train --config configs/cnn10.json --dummy --set epochs=3 --member smoke --topic dummy
 	uv run iml-compare runs/smoke/dummy
+
+data-doctor:        ## check the local Telegram/FFmpeg collection dependencies
+	uv run --group data voice-dataset doctor
+
+data-rank:          ## count eligible voice messages without downloading them
+	uv run --group data voice-dataset rank-chats --start $(START) --end $(END)
+
+data-pilot:         ## interactively select team chats and collect the first 20 messages
+	uv run --group data voice-dataset collect-telegram --start $(START) --end $(END) --expected-chat-count $(CHATS) --limit 20
+
+data-prepare:       ## TARGET=speaker_01: validate reviewed rows and build training splits
+	uv run iml-prepare-data --metadata data/metadata.csv --source-root . --target-speaker $(TARGET) --output data/processed/$(TARGET)
 
 sync:               ## push code + configs to the server (no data, no runs, no venv)
 	rsync -az --delete --exclude .venv --exclude runs --exclude data --exclude mlruns.db --exclude .git ./ $(SERVER):$(REMOTE_DIR)/

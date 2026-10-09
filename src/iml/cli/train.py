@@ -7,9 +7,11 @@ at the start so it can be found even if the terminal is lost.
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from iml.cli._data import load_splits
 from iml.config import ExperimentConfig
+from iml.data.manifest import copy_manifest_to_run, load_split_manifest
 from iml.device import get_device
 from iml.runs import RUNS_ROOT
 from iml.train import fit
@@ -31,6 +33,11 @@ def parse_args(argv=None):
     p.add_argument("--device", help="hip (AMD, = cuda in torch) | cuda | mps | cpu (default: auto)")
     p.add_argument("--dummy", action="store_true", help="synthetic data for smoke tests")
     p.add_argument(
+        "--data-manifest",
+        default="data/processed/splits.json",
+        help="validated splits.json for real training data",
+    )
+    p.add_argument(
         "--overwrite", action="store_true", help="retrain even if the run folder is finished"
     )
     return p.parse_args(argv)
@@ -43,8 +50,32 @@ def main(argv=None) -> None:
         cfg = cfg.with_overrides(f"member={args.member}")
     if args.topic:
         cfg = cfg.with_overrides(f"topic={args.topic}")
-    loaders = load_splits(cfg, dummy=args.dummy)
-    fit(cfg, loaders, root=args.runs_root, device=get_device(args.device), overwrite=args.overwrite)
+    manifest_path: Path | None = None
+    if args.dummy:
+        cfg = cfg.with_overrides("dataset_id=dummy-v1")
+    else:
+        manifest_path = Path(args.data_manifest).resolve()
+        manifest = load_split_manifest(manifest_path)
+        if cfg.dataset_id and cfg.dataset_id != manifest["dataset_id"]:
+            raise ValueError(
+                f"config dataset_id {cfg.dataset_id!r} does not match "
+                f"manifest {manifest['dataset_id']!r}"
+            )
+        cfg = cfg.with_overrides(f"dataset_id={manifest['dataset_id']}")
+    loaders = load_splits(
+        cfg,
+        dummy=args.dummy,
+        manifest_path=str(manifest_path) if manifest_path else None,
+    )
+    record = fit(
+        cfg,
+        loaders,
+        root=args.runs_root,
+        device=get_device(args.device),
+        overwrite=args.overwrite,
+    )
+    if manifest_path:
+        copy_manifest_to_run(manifest_path, record.path)
 
 
 if __name__ == "__main__":

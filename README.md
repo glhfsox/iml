@@ -12,6 +12,9 @@ uv run pytest                # ~10 s, includes an end-to-end smoke training on s
 make smoke                   # two dummy runs + comparison table under runs/smoke/
 ```
 
+Add `--group data` to `uv sync` on a computer that will collect Telegram audio.  The training
+server does not need Telegram credentials or a session file.
+
 On the AMD server check the ROCm version first (`rocm-smi --showversion`) and, if it is not
 6.4, change the `pytorch-rocm` index URL in `pyproject.toml` (e.g. `.../whl/rocm6.3`).
 
@@ -32,7 +35,7 @@ app/            production side: load one best model and classify a recording (a
 notebooks/      one folder per member: main.py (demo) + comparisons/<topic>/experiments.ipynb
 configs/        baseline json per model + grids/ for sweeps (gitignored: regenerate with `make configs` or share by hand)
 runs/           <member>/<topic>/<run_name>/  — results; not in git (shared via MLflow and `make pull-runs`)
-data/           recordings (gitignored, collected later)
+data/           reviewed recordings + prepared manifests (always gitignored)
 tests/          pytest
 docs/architecture/map.jsonl   component map
 ```
@@ -81,7 +84,67 @@ Knobs a model does not use (e.g. `bn_position` for resnet18) must stay at their 
 `build_model` refuses such configs so a sweep cannot produce fake comparisons.
 
 Until recordings exist, `--dummy` (CLI) / `DUMMY = True` (notebooks) use a synthetic dataset.
-Real data loading goes into `iml.cli._data.load_splits` + `SpectrogramDataset`.
+
+## Telegram data pipeline
+
+The repository includes the local `voice-dataset` collector, but credentials, SQLite state,
+review sheets and recordings stay under gitignored `data/`.  Install the optional collector and
+check local FFmpeg:
+
+```bash
+uv sync --group dev --group data
+uv run voice-dataset doctor
+```
+
+First rank personal chats without downloading media, then run the required 20-message pilot.
+For four team members, three one-to-one chats normally cover the owner plus three teammates:
+
+```bash
+uv run voice-dataset rank-chats --start 2025-10-01 --end 2026-10-07
+uv run voice-dataset collect-telegram \
+  --start 2025-10-01 --end 2026-10-07 \
+  --expected-chat-count 3 --limit 20
+```
+
+The command collects ordinary voice messages by default; video notes are included only with
+`--include-video-notes`.  It stores originals, creates mono 16 kHz PCM16 WAV files, calculates
+quality indicators, detects exact decoded-audio duplicates and resumes an interrupted fixed
+batch. Automatic checks only route audio to accept/review/reject. The review sheet pre-fills
+unconfirmed sender/day hints to make review faster, but a human still confirms the speaker,
+consent and session in `data/labels/speaker_labels_<run>.csv`, then applies it:
+
+```bash
+uv run voice-dataset apply-labels data/labels/speaker_labels_<run>.csv
+```
+
+After review, build a one-vs-rest dataset for one owner:
+
+```bash
+uv run iml-prepare-data \
+  --metadata /private/collector/data/metadata.csv \
+  --source-root /private/collector \
+  --target-speaker speaker_01 \
+  --output data/processed/speaker_01
+```
+
+The command accepts only consented, manually approved, single-speaker, unique recordings and
+validates mono 16 kHz PCM16 WAV files.  It splits every participant by whole recording sessions,
+so all participants contribute to train/validation/test but no recording session can cross them.
+Each person therefore needs at least three independent session codes (for example three days).
+
+Train on the generated manifest:
+
+```bash
+uv run iml-train \
+  --config configs/cnn10.json \
+  --data-manifest data/processed/speaker_01/splits.json \
+  --member <you> \
+  --topic baseline
+```
+
+The dataset fingerprint becomes part of the experiment config/run hash, and the exact
+`splits.json` is copied into the run folder.  See `docs/data_pipeline.md` for the schema,
+collection boundary and privacy rules.
 
 ## MLflow (server)
 

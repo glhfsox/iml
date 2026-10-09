@@ -1,8 +1,8 @@
 """Datasets and loaders.
 
-``SpectrogramDataset`` is the real one (list of ``(path, label)``; data collection is a later
-step). ``DummyDataset`` generates a learnable synthetic problem so the whole pipeline can be
-smoke-tested without any recordings.
+``SpectrogramDataset`` is the real one (list of validated ``(path, label)`` items from a split
+manifest). ``DummyDataset`` generates a learnable synthetic problem so the whole pipeline can be
+smoke-tested without recordings.
 """
 
 from __future__ import annotations

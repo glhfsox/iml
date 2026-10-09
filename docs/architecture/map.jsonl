@@ -12,6 +12,8 @@
 {"id":"model_folders","kind":"module","area":"app","files":["app/models/speaker_verification/","app/models/speaker_verification/contracts.py","app/models/README.md"],"in":["ExperimentConfig","nn.Module"],"out":["Pipeline","Verdict"],"purpose":"One folder per architecture: pipeline/operators.py (transform -> infer -> decode), transform.py, frozen config.json/best.pt/model.onnx","symbols":["class Verdict"]}
 {"id":"notebooks","kind":"module","area":"notebooks","files":["notebooks/_template/","notebooks/glhfsox/"],"in":["ExperimentConfig list"],"out":["run folders","comparison table and plots"],"purpose":"Per-member notebooks: comparisons/<topic>/experiments.ipynb runs fit() for several configs and compares them; main.py calls the app"}
 {"id":"tests","kind":"ci","area":"tests","files":["tests/"],"purpose":"pytest: config round-trip, metrics on hand-computed cases, forward/backward of all five models, data shapes, end-to-end smoke training with MLflow"}
+{"id":"telegram_collector","kind":"module","area":"data","files":["src/telegram_asr_dataset/"],"in":["selected Telegram chats or Desktop export","date range","manual review CSV"],"out":["original media","16 kHz PCM16 WAV","metadata.csv","quality report"],"purpose":"Local resumable privacy-preserving collection, quality routing, decoded-PCM deduplication and human speaker/consent review","symbols":["class DatasetProject","class TelegramSource"]}
+{"id":"dataset_manifest","kind":"module","area":"data","files":["src/iml/data/manifest.py","src/iml/cli/prepare.py"],"in":["reviewed metadata.csv","normalized WAV"],"out":["manifest.csv","splits.json","dataset fingerprint"],"purpose":"Validate approved rows and create session-safe binary target-versus-impostor train/val/test datasets","symbols":["def prepare_dataset","def load_split_manifest"]}
 {"from":"config","to":"models","data":"ExperimentConfig"}
 {"from":"config","to":"audio_data","data":"spectrogram and excerpt settings"}
 {"from":"audio_data","to":"trainer","data":"DataLoaders of (spec, label)"}
@@ -29,3 +31,5 @@
 {"from":"model_folders","to":"app","data":"build_pipeline"}
 {"from":"audio_data","to":"app","data":"load_wav, LogMelSpectrogram"}
 {"from":"notebooks","to":"app","data":"main.py demo call"}
+{"from":"telegram_collector","to":"dataset_manifest","data":"reviewed metadata + normalized WAV"}
+{"from":"dataset_manifest","to":"audio_data","data":"validated split membership and labels"}

@@ -1,0 +1,20 @@
+[dataset]
+language = "ru"
+sample_rate_hz = 16000
+channels = 1
+pilot_limit = 20
+task = "speaker_verification"
+expected_chat_count = 3
+
+[collection]
+# Both dates are interpreted in the timezone below; end_date is inclusive.
+timezone = "Europe/Warsaw"
+start_date = "2025-10-01"
+end_date = "2026-10-07"
+minimum_duration_seconds = 2
+maximum_duration_seconds = 45
+
+[privacy]
+# Never put api_id, api_hash, phone number, login codes, or session data here.
+# Telegram credentials are requested interactively and the API hash is hidden.
+pseudonymize_identifiers = true
