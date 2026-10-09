@@ -1,0 +1,4 @@
+# Allowlist: the image holds dependencies only, the (private) code never enters the build context.
+*
+!pyproject.toml
+!uv.lock
