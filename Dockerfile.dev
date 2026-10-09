@@ -1,0 +1,49 @@
+# Dev environment for the AMD/ROCm training box: the image of the Coder workspaces.
+# The torch wheels from download.pytorch.org/whl/rocm6.4 (pinned in uv.lock) bundle the HIP/ROCm
+# runtime, so the image needs no ROCm install: only the host's amdgpu driver and the /dev/kfd +
+# /dev/dri devices, which the Coder workspace template passes in.
+#
+# Dependencies only: the repo is private and never enters the image (.dockerignore lets only
+# pyproject.toml and uv.lock into the build context). In the workspace, `uv sync` in a checkout
+# adds the project itself to /opt/venv; run `nbstripout --install` there once for .gitattributes.
+#
+# The workspace runs as `coder` (uid 1000) with a persistent volume on /home/coder.
+FROM --platform=linux/amd64 python:3.12-slim-bookworm
+
+ARG USERNAME=coder
+ARG USER_UID=1000
+
+COPY --from=ghcr.io/astral-sh/uv:0.9.5 /uv /uvx /bin/
+
+# curl: the Coder agent and code-server download themselves with it; git: nbstripout filter from
+# .gitattributes; make: Makefile targets; libatomic1: loaded by torch; libstdc++-12-dev: C++ headers
+# for the kernels MIOpen compiles at runtime (e.g. BatchNorm), which otherwise fail on <type_traits>;
+# libdrm-common: amdgpu.ids (GPU names), which the libdrm bundled in torch/triton reads from AMD's
+# /opt/amdgpu prefix and warns "amdgpu.ids: No such file or directory" without
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl git jq less make nano openssh-client procps sudo \
+        libatomic1 libstdc++-12-dev libdrm-common \
+    && rm -rf /var/lib/apt/lists/* \
+    && install -d /opt/amdgpu/share/libdrm \
+    && ln -s /usr/share/libdrm/amdgpu.ids /opt/amdgpu/share/libdrm/amdgpu.ids \
+    && useradd --create-home --uid $USER_UID --shell /bin/bash $USERNAME \
+    && echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$USERNAME \
+    && install -d -o $USERNAME -g $USERNAME /opt/venv
+
+# venv lives outside the checkout, owned by the user so `uv sync` / `uv add` work in the workspace
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    VIRTUAL_ENV=/opt/venv \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    PATH=/opt/venv/bin:$PATH
+
+USER $USERNAME
+WORKDIR /home/$USERNAME
+
+# torch-rocm is several GB; the lockfile is only bind-mounted, so it stays out of the image too
+RUN --mount=type=cache,target=/home/coder/.cache/uv,uid=1000,gid=1000 \
+    --mount=type=bind,source=pyproject.toml,target=/tmp/deps/pyproject.toml \
+    --mount=type=bind,source=uv.lock,target=/tmp/deps/uv.lock \
+    uv sync --project /tmp/deps --frozen --no-install-project --group dev --group export
+
+CMD ["bash"]
