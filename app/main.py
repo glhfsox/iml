@@ -74,7 +74,9 @@ def main(argv=None) -> None:
     src.add_argument("--model", help="frozen model folder name, e.g. cnn10")
     src.add_argument("--run", help="run folder, folder with best.pt, or a .pt file")
     p.add_argument("--wav", help="recording to classify")
-    p.add_argument("--random", action="store_true", help="use 2 s of noise instead of a file")
+    p.add_argument(
+        "--random", action="store_true", help="use one excerpt (cfg.excerpt_sec) of noise, no file"
+    )
     p.add_argument("--threshold", type=float, help="default: the run's val-chosen threshold")
     args = p.parse_args(argv)
     rec = load_model(args.model or args.run, threshold=args.threshold)

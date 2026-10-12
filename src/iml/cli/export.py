@@ -28,10 +28,10 @@ def export_onnx(run: str | Path, out: str | Path | None = None, opset: int = 17)
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
     out = Path(out) if out else ckpt_path.parent / "model.onnx"
-    dummy = torch.randn(1, 1, cfg.n_mels, n_frames(cfg))
+    example = torch.randn(1, 1, cfg.n_mels, n_frames(cfg))
     torch.onnx.export(
         model,
-        dummy,
+        example,
         str(out),
         input_names=["spectrogram"],
         output_names=["logits"],

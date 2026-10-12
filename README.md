@@ -8,8 +8,8 @@ recording, models = CNNs trained from scratch, metrics = FAR / FRR on train, val
 
 ```bash
 uv sync --group dev          # macOS: PyPI torch (MPS); Linux server: HIP/ROCm torch for the AMD GPU (see pyproject)
-uv run pytest                # ~10 s, includes an end-to-end smoke training on synthetic data
-make smoke                   # two dummy runs + comparison table under runs/smoke/
+uv run pytest                # includes end-to-end training on a tiny generated contract dataset
+make smoke DATA=<dataset>    # two short runs + comparison table under runs/smoke/
 ```
 
 On the AMD server check the ROCm version first (`rocm-smi --showversion`) and, if it is not
@@ -32,7 +32,7 @@ app/            production side: load one best model and classify a recording (a
 notebooks/      one folder per member: main.py (demo) + comparisons/<topic>/experiments.ipynb
 configs/        baseline json per model + grids/ for sweeps (gitignored: regenerate with `make configs` or share by hand)
 runs/           <member>/<topic>/<run_name>/  — results; not in git (shared via MLflow and `make pull-runs`)
-data/           recordings (gitignored, collected later)
+data/           raw recordings (gitignored); datasets follow DATA_CONTRACT.md
 tests/          pytest
 docs/architecture/map.jsonl   component map
 ```
@@ -80,8 +80,9 @@ run folder is loaded instead of retrained (`--overwrite` / `fit(..., overwrite=T
 Knobs a model does not use (e.g. `bn_position` for resnet18) must stay at their defaults;
 `build_model` refuses such configs so a sweep cannot produce fake comparisons.
 
-Until recordings exist, `--dummy` (CLI) / `DUMMY = True` (notebooks) use a synthetic dataset.
-Real data loading goes into `iml.cli._data.load_splits` + `SpectrogramDataset`.
+Data: every dataset follows [DATA_CONTRACT.md](DATA_CONTRACT.md) (`train/val/test.csv` with
+`path,allowed` + 3 s clips). Build one with `iml-data build`, check it with `iml-data validate`, and
+train on it with `--data <dataset>` (or `$IML_DATA`); in notebooks `load_splits(cfg, data_dir=...)`.
 
 ## MLflow (server)
 

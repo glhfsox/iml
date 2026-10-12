@@ -1,8 +1,9 @@
 import torch
 
+from iml.cli._data import load_splits
 from iml.config import ExperimentConfig
 from iml.data.audio import crop_or_pad, load_wav, save_wav
-from iml.data.dataset import DummyDataset, SpectrogramDataset, make_loaders
+from iml.data.dataset import SpectrogramDataset
 from iml.data.spectrogram import LogMelSpectrogram, n_frames
 
 
@@ -33,11 +34,11 @@ def test_wav_roundtrip_and_resample(tmp_path):
     assert spec.shape == (1, cfg.n_mels, n_frames(cfg)) and label == 1
 
 
-def test_dummy_dataset_and_loaders():
+def test_contract_dataset_loaders(tiny_data):
     cfg = ExperimentConfig(batch_size=8, num_workers=0)
-    ds = DummyDataset(cfg, n=20)
-    x, y = ds[0]
+    loaders = load_splits(cfg, data_dir=tiny_data)
+    assert set(loaders) == {"train", "val", "test"}
+    x, y = loaders["val"].dataset[0]
     assert x.shape == (1, cfg.n_mels, n_frames(cfg)) and y in (0, 1)
-    loaders = make_loaders({"train": ds, "val": ds}, cfg)
     xb, yb = next(iter(loaders["train"]))
     assert xb.shape[0] == 8 and yb.shape == (8,)

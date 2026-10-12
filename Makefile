@@ -5,7 +5,7 @@ REMOTE_DIR ?= ~/iml
 .PHONY: install test lint smoke sync pull-runs mlflow-ui export export-all freeze configs
 
 install:            ## create .venv with all deps (HIP/ROCm torch on the linux server, PyPI torch on macOS)
-	uv sync --group dev
+	uv sync --group dev --group data
 
 test:               ## unit + smoke tests
 	uv run pytest
@@ -13,10 +13,11 @@ test:               ## unit + smoke tests
 lint:
 	uv run ruff check src tests app notebooks
 
-smoke:              ## end-to-end on synthetic data, then compare the runs
-	uv run iml-train --config configs/simple_cnn.json --dummy --set epochs=3 --member smoke --topic dummy
-	uv run iml-train --config configs/cnn10.json --dummy --set epochs=3 --member smoke --topic dummy
-	uv run iml-compare runs/smoke/dummy
+DATA ?= $(IML_DATA)
+smoke:              ## DATA=<dataset>: two short runs on a contract dataset, then compare them
+	uv run iml-train --config configs/simple_cnn.json --data $(DATA) --set epochs=3 --member smoke --topic data
+	uv run iml-train --config configs/cnn10.json --data $(DATA) --set epochs=3 --member smoke --topic data
+	uv run iml-compare runs/smoke/data
 
 sync:               ## push code + configs to the server (no data, no runs, no venv)
 	rsync -az --delete --exclude .venv --exclude runs --exclude data --exclude mlruns.db --exclude .git ./ $(SERVER):$(REMOTE_DIR)/
@@ -43,6 +44,7 @@ freeze:             ## RUN=runs/...: copy best.pt + config.json into app/models/
 	uv run --group export iml-export --run $$dst
 
 configs:            ## regenerate the baseline json config per model (configs/ is gitignored)
+	mkdir -p configs
 	uv run python -c "from iml.config import ExperimentConfig as C; \
 	[C(model=m, member='anon', topic='baseline', **e).to_json(f'configs/{m}.json') for m, e in \
 	{'simple_cnn': {}, 'cnn10': dict(depth=4, dropout=0.2), 'resnet18': dict(lr=5e-4), 'mobilenet_v2': dict(dropout=0.2), 'ecapa_tdnn': dict(init='default')}.items()]"

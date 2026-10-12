@@ -7,7 +7,7 @@ Public API (what notebooks and the app import)::
 
 from iml.config import MODEL_NAMES, ExperimentConfig
 from iml.data.audio import load_wav, save_wav
-from iml.data.dataset import DummyDataset, SpectrogramDataset, make_loaders
+from iml.data.dataset import SpectrogramDataset, make_loaders
 from iml.data.spectrogram import LogMelSpectrogram
 from iml.device import get_device
 from iml.metrics import classification_metrics, eer, far, frr
@@ -26,7 +26,6 @@ __all__ = [
     "save_wav",
     "LogMelSpectrogram",
     "SpectrogramDataset",
-    "DummyDataset",
     "make_loaders",
     # models
     "build_model",

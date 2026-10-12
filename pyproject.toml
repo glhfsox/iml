@@ -25,8 +25,13 @@ iml-train = "iml.cli.train:main"
 iml-sweep = "iml.cli.sweep:main"
 iml-compare = "iml.cli.compare:main"
 iml-export = "iml.cli.export:main"
+iml-data = "iml.cli.data:main"
 
 [dependency-groups]
+data = [
+    "av>=14",  # decodes raw audio (.oga/.m4a/...) in iml-data build
+    "imageio-ffmpeg>=0.5",  # an ffmpeg binary inside the venv (bin/ffmpeg)
+]
 export = [
     "onnx>=1.16",
     "onnxruntime>=1.18",

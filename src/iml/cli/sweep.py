@@ -1,4 +1,4 @@
-"""``iml-sweep --config configs/simple_cnn.json --grid configs/grids/bn.json [--dummy]``
+"""``iml-sweep --config configs/simple_cnn.json --grid configs/grids/bn.json --data DIR``
 
 Grid file = ``{"field": [values...], ...}``; every combination becomes one run under the
 same member/topic. Finished runs (metrics.json present) are skipped, so a sweep can be
@@ -12,7 +12,7 @@ import itertools
 import json
 from pathlib import Path
 
-from iml.cli._data import load_splits
+from iml.cli._data import check_run_data, data_fingerprint, load_splits, record_run_data
 from iml.config import ExperimentConfig
 from iml.device import get_device
 from iml.runs import RUNS_ROOT, run_dir
@@ -37,7 +37,8 @@ def main(argv=None) -> None:
     p.add_argument("--topic")
     p.add_argument("--runs-root", default=str(RUNS_ROOT))
     p.add_argument("--device", help="hip | cuda | mps | cpu (default: auto)")
-    p.add_argument("--dummy", action="store_true")
+    p.add_argument("--data", help="dataset folder (DATA_CONTRACT.md); default: $IML_DATA")
+    p.add_argument("--overwrite", action="store_true", help="retrain finished runs")
     args = p.parse_args(argv)
 
     base = ExperimentConfig.from_json(args.config)
@@ -46,14 +47,18 @@ def main(argv=None) -> None:
             base = base.with_overrides(f"{key}={val}")
     configs = expand_grid(base, json.loads(Path(args.grid).read_text()))
     device = get_device(args.device)
+    fp = data_fingerprint(args.data)
     print(f"{len(configs)} configurations")
     for i, cfg in enumerate(configs, 1):
         out = run_dir(cfg, args.runs_root)
-        if (out / "metrics.json").exists():
+        check_run_data(out, fp, overwrite=args.overwrite)
+        if (out / "metrics.json").exists() and not args.overwrite:
             print(f"[{i}/{len(configs)}] skip (done): {out.name}")
             continue
         print(f"[{i}/{len(configs)}] {out.name}")
-        fit(cfg, load_splits(cfg, dummy=args.dummy), root=args.runs_root, device=device)
+        loaders = load_splits(cfg, data_dir=args.data)
+        fit(cfg, loaders, root=args.runs_root, device=device, overwrite=args.overwrite)
+        record_run_data(out, fp)
 
 
 if __name__ == "__main__":

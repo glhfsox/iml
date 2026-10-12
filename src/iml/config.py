@@ -46,7 +46,7 @@ class ExperimentConfig:
 
     # --- input / spectrogram ---
     sample_rate: int = 16000
-    excerpt_sec: float = 2.0  # length of one training excerpt
+    excerpt_sec: float = 3.0  # length of one excerpt (= the 3 s clips of DATA_CONTRACT.md)
     n_fft: int = 512
     hop_length: int = 160  # 10 ms at 16 kHz
     n_mels: int = 64

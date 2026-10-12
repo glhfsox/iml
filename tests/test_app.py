@@ -4,9 +4,9 @@ import torch
 from app.main import load_model, predict
 from app.models import model_dir, pipeline_module
 from app.models.speaker_verification.contracts import Verdict
+from iml.cli._data import load_splits
 from iml.config import MODEL_NAMES, ExperimentConfig
 from iml.data.audio import save_wav
-from iml.data.dataset import DummyDataset, make_loaders
 from iml.models import SUPPORTED_KNOBS, build_model
 from iml.train import fit
 
@@ -21,13 +21,13 @@ def test_every_model_folder_builds_a_pipeline(name):
     assert isinstance(v, Verdict) and v.label in (0, 1) and 0.5 <= v.confidence <= 1.0
 
 
-def test_app_loads_run_and_predicts(tmp_path):
+def test_app_loads_run_and_predicts(tmp_path, tiny_data):
     cfg = ExperimentConfig(
         width=4, epochs=1, batch_size=16, num_workers=0, dropout=0.2, mc_dropout_samples=4
     )
     rec = fit(
         cfg,
-        make_loaders({"train": DummyDataset(cfg, n=32)}, cfg),
+        load_splits(cfg, data_dir=tiny_data),
         root=tmp_path,
         device=torch.device("cpu"),
         verbose=False,
@@ -47,13 +47,11 @@ def test_ecapa_embed_operator():
     assert emb.shape == (2, 192)
 
 
-def test_app_uses_run_threshold_by_default(tmp_path):
+def test_app_uses_run_threshold_by_default(tmp_path, tiny_data):
     cfg = ExperimentConfig(width=4, epochs=1, batch_size=16, num_workers=0)
     rec = fit(
         cfg,
-        make_loaders(
-            {"train": DummyDataset(cfg, n=32), "val": DummyDataset(cfg, n=32, seed=1)}, cfg
-        ),
+        load_splits(cfg, data_dir=tiny_data),
         root=tmp_path,
         device=torch.device("cpu"),
         verbose=False,

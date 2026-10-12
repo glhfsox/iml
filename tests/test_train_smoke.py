@@ -3,8 +3,8 @@ import os
 import pytest
 import torch
 
+from iml.cli._data import load_splits
 from iml.config import ExperimentConfig
-from iml.data.dataset import DummyDataset, make_loaders
 from iml.runs import find_runs, load_checkpoint, load_run
 from iml.train import fit, predict_proba
 
@@ -20,13 +20,11 @@ EXPECTED_FILES = {
 }
 
 
-def _loaders(cfg, n=64):
-    return make_loaders(
-        {s: DummyDataset(cfg, n=n, seed=i) for i, s in enumerate(("train", "val", "test"))}, cfg
-    )
+def _loaders(cfg, data_dir):
+    return load_splits(cfg, data_dir=data_dir)
 
 
-def test_fit_writes_complete_run_folder(tmp_path):
+def test_fit_writes_complete_run_folder(tmp_path, smoke_data):
     cfg = ExperimentConfig(
         model="simple_cnn",
         width=16,
@@ -39,7 +37,9 @@ def test_fit_writes_complete_run_folder(tmp_path):
         mc_dropout_samples=3,
         dropout=0.1,
     )
-    rec = fit(cfg, _loaders(cfg, n=128), root=tmp_path, device=torch.device("cpu"), verbose=False)
+    rec = fit(
+        cfg, _loaders(cfg, smoke_data), root=tmp_path, device=torch.device("cpu"), verbose=False
+    )
     assert EXPECTED_FILES <= {p.name for p in rec.path.iterdir()}
     assert rec.path.parent.parent.parent == tmp_path and rec.path.parent.name == "smoke"
     for split in ("train", "val", "test"):
@@ -50,7 +50,7 @@ def test_fit_writes_complete_run_folder(tmp_path):
         len(rec.history) == 6
         and rec.history["train_loss"].iloc[-1] < rec.history["train_loss"].iloc[0]
     )
-    assert rec.metrics["val"]["macro_f1"] > 0.8  # dummy problem is easy
+    assert rec.metrics["val"]["macro_f1"] > 0.8  # tone vs noise is easy
     thr = rec.metrics["decision_threshold"]
     assert 0.0 <= thr <= 1.0 and rec.metrics["test"]["threshold"] == thr
     assert rec.metrics["val"]["n_pos"] + rec.metrics["val"]["n_neg"] == rec.metrics["val"]["n"]
@@ -64,11 +64,13 @@ def test_fit_writes_complete_run_folder(tmp_path):
     assert ckpt["metrics"]["decision_threshold"] == thr
 
     # a finished run is not retrained unless asked
-    same = fit(cfg, _loaders(cfg, n=128), root=tmp_path, device=torch.device("cpu"), verbose=False)
+    same = fit(
+        cfg, _loaders(cfg, smoke_data), root=tmp_path, device=torch.device("cpu"), verbose=False
+    )
     assert same.metrics["best_epoch"] == rec.metrics["best_epoch"]
 
 
-def test_early_stopping_and_sgd_cosine(tmp_path):
+def test_early_stopping_and_sgd_cosine(tmp_path, tiny_data):
     cfg = ExperimentConfig(
         width=4,
         epochs=10,
@@ -79,7 +81,9 @@ def test_early_stopping_and_sgd_cosine(tmp_path):
         batch_size=16,
         num_workers=0,
     )
-    rec = fit(cfg, _loaders(cfg, n=32), root=tmp_path, device=torch.device("cpu"), verbose=False)
+    rec = fit(
+        cfg, _loaders(cfg, tiny_data), root=tmp_path, device=torch.device("cpu"), verbose=False
+    )
     assert rec.metrics["epochs_run"] == 2  # lr=0 -> no improvement after epoch 1
 
 
@@ -95,12 +99,16 @@ def test_mc_dropout_gives_spread():
 
 
 @pytest.mark.slow
-def test_mlflow_tracking(tmp_path, monkeypatch):
+def test_mlflow_tracking(tmp_path, monkeypatch, tiny_data):
     monkeypatch.setenv("MLFLOW_TRACKING_URI", f"sqlite:///{tmp_path}/mlruns.db")
     monkeypatch.chdir(tmp_path)  # mlflow artifact root is relative to cwd
     cfg = ExperimentConfig(width=4, epochs=1, batch_size=16, num_workers=0, member="t", topic="mlf")
     rec = fit(
-        cfg, _loaders(cfg, n=32), root=tmp_path / "runs", device=torch.device("cpu"), verbose=False
+        cfg,
+        _loaders(cfg, tiny_data),
+        root=tmp_path / "runs",
+        device=torch.device("cpu"),
+        verbose=False,
     )
     import mlflow
 
@@ -110,7 +118,9 @@ def test_mlflow_tracking(tmp_path, monkeypatch):
     assert os.path.exists(rec.path / "metrics.json")
 
 
-def test_class_weight_balanced(tmp_path):
+def test_class_weight_balanced(tmp_path, tiny_data):
     cfg = ExperimentConfig(width=4, epochs=1, batch_size=16, num_workers=0, class_weight="balanced")
-    rec = fit(cfg, _loaders(cfg, n=32), root=tmp_path, device=torch.device("cpu"), verbose=False)
+    rec = fit(
+        cfg, _loaders(cfg, tiny_data), root=tmp_path, device=torch.device("cpu"), verbose=False
+    )
     assert "far" in rec.metrics["val"]

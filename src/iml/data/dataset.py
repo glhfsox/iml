@@ -1,20 +1,18 @@
 """Datasets and loaders.
 
-``SpectrogramDataset`` is the real one (list of ``(path, label)``; data collection is a later
-step). ``DummyDataset`` generates a learnable synthetic problem so the whole pipeline can be
-smoke-tested without any recordings.
+``SpectrogramDataset`` takes a list of ``(path, label)`` (one split of a DATA_CONTRACT.md dataset,
+see ``iml.data.contract.read_split``).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import torch
 from torch.utils.data import DataLoader, Dataset
 
 from iml.config import ExperimentConfig
 from iml.data.audio import crop_or_pad, load_wav
-from iml.data.spectrogram import LogMelSpectrogram, n_frames
+from iml.data.spectrogram import LogMelSpectrogram
 
 
 class SpectrogramDataset(Dataset):
@@ -40,31 +38,6 @@ class SpectrogramDataset(Dataset):
         wave = crop_or_pad(wave, self.n_samples, random_crop=self.train)
         spec = self.to_spec(wave).squeeze(0)
         return spec, int(label)
-
-
-class DummyDataset(Dataset):
-    """Synthetic 2-class spectrograms: class 1 contains a sustained "tone" (a bright 2-bin
-    horizontal ridge at a random mel position), class 0 is plain noise.
-
-    The cue is local and position-independent, so every model in the registry (including
-    the ones with global pooling) can learn it in a few epochs; noise keeps it non-trivial.
-    """
-
-    def __init__(self, cfg: ExperimentConfig, n: int = 64, seed: int = 0, noise: float = 1.0):
-        g = torch.Generator().manual_seed(seed)
-        n_frames_ = n_frames(cfg)
-        self.labels = torch.arange(n) % 2
-        self.specs = torch.randn(n, 1, cfg.n_mels, n_frames_, generator=g) * noise
-        rows = torch.randint(1, cfg.n_mels - 1, (n,), generator=g)
-        for i, y in enumerate(self.labels.tolist()):
-            if y == 1:
-                self.specs[i, 0, rows[i] : rows[i] + 2, :] += 4.0
-
-    def __len__(self) -> int:
-        return len(self.labels)
-
-    def __getitem__(self, i: int):
-        return self.specs[i], int(self.labels[i])
 
 
 def make_loaders(
