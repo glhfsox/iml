@@ -117,6 +117,29 @@ consent and session in `data/labels/speaker_labels_<run>.csv`, then applies it:
 uv run voice-dataset apply-labels data/labels/speaker_labels_<run>.csv
 ```
 
+An optional local ECAPA-TDNN check can compare one collection run with manually approved
+reference recordings. It downloads open model weights once, never uploads audio, and writes a
+separate weak-label report without changing manual labels:
+
+```bash
+uv run --group data voice-dataset verify-speaker \
+  --run-id <run_id> --claimed-speaker P
+```
+
+Only `auto_likely_match` rows are candidates for training. `uncertain` and
+`auto_likely_mismatch` stay excluded unless reviewed; automatic results must not be used as
+ground truth for validation or test.
+
+Direct recordings supplied by a consenting participant can be imported locally. Long sources
+are archived, normalized and split into bounded chunks; every chunk from one source stays in one
+split group:
+
+```bash
+uv run --group data voice-dataset import-local \
+  --input-dir data/michal --speaker-ref MH --language en \
+  --consent-ref consent_mh_01 --chunk-seconds 20
+```
+
 After review, build a one-vs-rest dataset for one owner:
 
 ```bash

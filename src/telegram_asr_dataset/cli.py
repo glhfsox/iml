@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib.metadata
+import json
 import os
 import sys
 from collections.abc import Sequence
@@ -12,9 +13,11 @@ from typing import Any
 from .audio import AudioProcessingError, find_ffmpeg
 from .config import ProjectPaths, parse_date_range
 from .export_source import ExportChat, export_items, load_export_chats
+from .local_import import import_local_speaker
 from .metadata import apply_labels_csv, write_labels_template, write_metadata_csv
 from .pipeline import DatasetProject, new_collection_run_id
 from .report import save_report
+from .speaker_verification import verify_collection_run
 from .split import assert_group_safe, assign_splits
 from .telegram_source import TelegramDialog, TelegramSource
 from .trials import build_verification_trials
@@ -700,6 +703,32 @@ def command_reassess_quality(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_verify_speaker(args: argparse.Namespace) -> int:
+    root = Path(args.project_root).resolve()
+    report = verify_collection_run(
+        metadata_csv=root / "data" / "metadata.csv",
+        project_root=root,
+        run_id=args.run_id,
+        claimed_speaker=args.claimed_speaker,
+        output_dir=root / "data" / "reports",
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def command_import_local(args: argparse.Namespace) -> int:
+    report = import_local_speaker(
+        project_root=Path(args.project_root),
+        input_dir=Path(args.input_dir),
+        speaker_ref=args.speaker_ref,
+        language=args.language,
+        consent_ref=args.consent_ref,
+        chunk_seconds=args.chunk_seconds,
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _add_collection_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--start", help="Начальная дата YYYY-MM-DD")
     parser.add_argument("--end", help="Конечная дата YYYY-MM-DD включительно")
@@ -864,6 +893,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Пересчитать качество всех WAV для speaker verification",
     )
     reassess.set_defaults(handler=command_reassess_quality)
+
+    verify = subparsers.add_parser(
+        "verify-speaker",
+        help="Локально сравнить записи запуска с ручными эталонами голоса",
+    )
+    verify.add_argument("--run-id", required=True)
+    verify.add_argument("--claimed-speaker", required=True)
+    verify.set_defaults(handler=command_verify_speaker)
+
+    local = subparsers.add_parser(
+        "import-local",
+        help="Импортировать локальные записи участника и нарезать длинные исходники",
+    )
+    local.add_argument("--input-dir", required=True)
+    local.add_argument("--speaker-ref", required=True)
+    local.add_argument("--language", default="en")
+    local.add_argument("--consent-ref", required=True)
+    local.add_argument("--chunk-seconds", type=float, default=20.0)
+    local.set_defaults(handler=command_import_local)
     return parser
 
 

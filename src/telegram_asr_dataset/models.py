@@ -23,7 +23,7 @@ class Candidate:
     telegram_duration_ms: int | None = None
 
     def __post_init__(self) -> None:
-        if self.source_type not in {"telegram_api", "telegram_export"}:
+        if self.source_type not in {"telegram_api", "telegram_export", "local_directory"}:
             raise ValueError(f"Unsupported source_type: {self.source_type}")
         if self.media_type not in {"voice", "video_note"}:
             raise ValueError(f"Unsupported media_type: {self.media_type}")

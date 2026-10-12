@@ -32,6 +32,7 @@ voice-dataset = "telegram_asr_dataset.cli:main"
 data = [
     "Telethon>=1.36,<2",
     "imageio-ffmpeg>=0.5.1,<1",
+    "speechbrain>=1.0.3,<2",
 ]
 export = [
     "onnx>=1.16",
