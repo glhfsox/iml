@@ -13,6 +13,7 @@ from pathlib import Path
 from telegram_asr_dataset.audio import AudioProcessingError, find_ffmpeg
 from telegram_asr_dataset.models import Candidate
 from telegram_asr_dataset.pipeline import DatasetProject
+from telegram_asr_dataset.report import build_report
 
 
 def write_tone(path: Path, frequency: float = 440.0) -> None:
@@ -111,6 +112,20 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(tombstone["consent_status"], "revoked")
                 metadata = project.paths.metadata_csv.read_text(encoding="utf-8")
                 self.assertNotIn(row["sample_id"], metadata)
+                report = build_report(project.store, "pilot")
+                self.assertEqual(report["selected_messages"], 1)
+                self.assertEqual(report["active_recordings"], 0)
+                self.assertEqual(report["purged_recordings"], 1)
+                self.assertEqual(report["quality_decisions"], {})
+
+                replacement = project.import_local_file(
+                    candidate("301"),
+                    tone,
+                    "next",
+                    "confirmed_other",
+                    consent_ref="consent_batch_01",
+                )
+                self.assertGreater(replacement["review_id"], tombstone["review_id"])
 
     def test_video_note_keeps_raw_and_extracts_separate_audio(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

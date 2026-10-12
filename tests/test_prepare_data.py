@@ -103,7 +103,7 @@ def test_prepare_dataset_has_no_session_leakage(tmp_path):
     report = prepare_dataset(metadata, root, output, "speaker_01")
 
     assert report["approved_recordings"] == 24
-    assert report["excluded_rows"] == {"not_ready": 1}
+    assert report["excluded_rows"] == {"pending_manual_review": 1}
     assert all(
         values == {"total": 8, "target": 2, "impostor": 6} for values in report["counts"].values()
     )

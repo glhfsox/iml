@@ -119,10 +119,12 @@ def _exclusion_reason(row: dict[str, str]) -> str | None:
         return "not_voice"
     if row["forwarded"].strip().lower() in {"1", "true", "yes"}:
         return "forwarded"
-    if row["dataset_status"] != "ready":
-        return "not_ready"
+    if row["dataset_status"] == "excluded":
+        return row.get("exclusion_reason", "").strip() or "excluded"
     if row["manual_review_status"] != "approved":
-        return "not_approved"
+        if row["manual_review_status"] == "pending":
+            return "pending_manual_review"
+        return "manual_review_not_approved"
     if row["speaker_status"] != "verified_single":
         return "speaker_not_verified_single"
     if row["consent_status"] not in {"confirmed_self", "confirmed_other"}:
@@ -137,6 +139,8 @@ def _exclusion_reason(row: dict[str, str]) -> str | None:
         return "missing_session_ref"
     if not row["normalized_audio_path"].strip():
         return "missing_audio_path"
+    if row["dataset_status"] != "ready":
+        return "not_ready"
     return None
 
 

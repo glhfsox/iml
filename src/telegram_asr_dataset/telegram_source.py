@@ -161,7 +161,10 @@ class TelegramSource:
         start_utc: datetime,
         end_exclusive_utc: datetime,
         include_video_notes: bool = False,
+        direction: str = "both",
     ) -> list[TelegramItem]:
+        if direction not in {"both", "incoming", "outgoing"}:
+            raise ValueError(f"Unsupported message direction: {direction}")
         result: list[TelegramItem] = []
         for dialog in dialogs:
             async for message in self.client.iter_messages(
@@ -175,6 +178,11 @@ class TelegramSource:
                     continue
                 if message_date < start_utc:
                     break
+                is_outgoing = bool(getattr(message, "out", False))
+                if direction == "incoming" and is_outgoing:
+                    continue
+                if direction == "outgoing" and not is_outgoing:
+                    continue
                 media_type = self._media_type(message)
                 if media_type is None:
                     continue

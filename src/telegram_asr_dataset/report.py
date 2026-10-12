@@ -17,15 +17,16 @@ def _round_seconds(milliseconds: int | float) -> float:
 
 def build_report(store: StateStore, collection_run_id: str) -> dict[str, Any]:
     rows = store.rows(collection_run_id)
-    durations = [int(row["audio_duration_ms"]) for row in rows if row["audio_duration_ms"]]
-    media = Counter(str(row["media_type"]) for row in rows)
-    chat_counts = Counter(str(row["chat_ref"]) for row in rows)
+    active_rows = [row for row in rows if row["processing_status"] != "purged"]
+    durations = [int(row["audio_duration_ms"]) for row in active_rows if row["audio_duration_ms"]]
+    media = Counter(str(row["media_type"]) for row in active_rows)
+    chat_counts = Counter(str(row["chat_ref"]) for row in active_rows)
     qc_flags: Counter[str] = Counter()
-    quality_decisions = Counter(str(row["quality_decision"]) for row in rows)
+    quality_decisions = Counter(str(row["quality_decision"]) for row in active_rows)
     quality_by_media: dict[str, Counter[str]] = {}
     quality_reasons: Counter[str] = Counter()
     quality_by_chat: dict[str, Counter[str]] = {}
-    for row in rows:
+    for row in active_rows:
         qc_flags.update(flag for flag in str(row["qc_flags"]).split("|") if flag)
         quality_reasons.update(flag for flag in str(row["quality_reasons"]).split("|") if flag)
         quality_by_chat.setdefault(str(row["chat_ref"]), Counter()).update(
@@ -35,23 +36,25 @@ def build_report(store: StateStore, collection_run_id: str) -> dict[str, Any]:
             [str(row["quality_decision"])]
         )
 
-    decoded = sum(bool(row["normalized_audio_path"]) for row in rows)
-    errors = sum(row["processing_status"] == "error" for row in rows)
-    duplicates = sum(row["dedupe_status"] == "exact_duplicate" for row in rows)
+    decoded = sum(bool(row["normalized_audio_path"]) for row in active_rows)
+    errors = sum(row["processing_status"] == "error" for row in active_rows)
+    duplicates = sum(row["dedupe_status"] == "exact_duplicate" for row in active_rows)
     report: dict[str, Any] = {
         "collection_run_id": collection_run_id,
         "selected_messages": len(rows),
+        "active_recordings": len(active_rows),
+        "purged_recordings": len(rows) - len(active_rows),
         "decoded_audio": decoded,
         "errors": errors,
         "exact_duplicates": duplicates,
-        "unique_recordings": sum(row["dedupe_status"] == "unique" for row in rows),
-        "pending_review": sum(row["dataset_status"] == "pending_review" for row in rows),
-        "ready_for_training": sum(row["dataset_status"] == "ready" for row in rows),
+        "unique_recordings": sum(row["dedupe_status"] == "unique" for row in active_rows),
+        "pending_review": sum(row["dataset_status"] == "pending_review" for row in active_rows),
+        "ready_for_training": sum(row["dataset_status"] == "ready" for row in active_rows),
         "excluded": sum(row["dataset_status"] == "excluded" for row in rows),
         "excluded_video_notes": sum(
             row["exclusion_reason"] == "video_notes_disabled" for row in rows
         ),
-        "speaker_unreviewed": sum(row["speaker_status"] == "unreviewed" for row in rows),
+        "speaker_unreviewed": sum(row["speaker_status"] == "unreviewed" for row in active_rows),
         "quality_decisions": dict(sorted(quality_decisions.items())),
         "quality_reasons": dict(sorted(quality_reasons.items())),
         "quality_by_chat": {
@@ -64,9 +67,9 @@ def build_report(store: StateStore, collection_run_id: str) -> dict[str, Any]:
         "media_types": dict(sorted(media.items())),
         "chats": dict(sorted(chat_counts.items())),
         "qc_flags": dict(sorted(qc_flags.items())),
-        "raw_bytes": sum(int(row["raw_size_bytes"] or 0) for row in rows),
-        "extracted_bytes": sum(int(row["extracted_size_bytes"] or 0) for row in rows),
-        "normalized_bytes": sum(int(row["normalized_size_bytes"] or 0) for row in rows),
+        "raw_bytes": sum(int(row["raw_size_bytes"] or 0) for row in active_rows),
+        "extracted_bytes": sum(int(row["extracted_size_bytes"] or 0) for row in active_rows),
+        "normalized_bytes": sum(int(row["normalized_size_bytes"] or 0) for row in active_rows),
         "total_duration_seconds": _round_seconds(sum(durations)),
         "external_uploads": 0,
     }
@@ -101,6 +104,8 @@ def report_markdown(report: dict[str, Any], pilot: bool = False) -> str:
         "## Объём",
         "",
         f"- Выбрано подходящих сообщений: {report['selected_messages']}",
+        f"- Осталось локальных записей: {report['active_recordings']}",
+        f"- Удалено по ручной проверке/согласию: {report['purged_recordings']}",
         f"- Успешно декодировано: {report['decoded_audio']}",
         f"- Уникальных записей: {report['unique_recordings']}",
         f"- Точных дубликатов: {report['exact_duplicates']}",
@@ -129,7 +134,7 @@ def report_markdown(report: dict[str, Any], pilot: bool = False) -> str:
         "",
         "Отправитель сообщения не считается автоматически говорящим. Строка "
         "становится готовой только после ручного подтверждения одного говорящего, "
-        "его роли и сессии записи.",
+        "его личности и сессии записи.",
         "",
         "## Состав",
         "",

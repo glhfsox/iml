@@ -11,6 +11,7 @@ from .state import StateStore
 
 METADATA_FIELDS = [
     "schema_version",
+    "review_id",
     "sample_id",
     "source_recording_id",
     "collection_run_id",
@@ -98,7 +99,7 @@ LABEL_EDIT_FIELDS = [
     "review_flags",
 ]
 
-LABEL_FIELDS = ["sample_id", *LABEL_CONTEXT_FIELDS, *LABEL_EDIT_FIELDS]
+LABEL_FIELDS = ["review_id", *LABEL_CONTEXT_FIELDS, *LABEL_EDIT_FIELDS, "sample_id"]
 
 TRANSCRIPT_STATUSES = {"missing", "draft", "verified"}
 SPEAKER_STATUSES = {
@@ -212,7 +213,10 @@ def write_labels_template(
 ) -> None:
     rows: list[dict[str, Any]] = []
     exact_aliases, sender_aliases, chat_aliases = _load_speaker_aliases(speaker_aliases_path)
-    for database_row in store.rows(collection_run_id):
+    database_rows = store.rows(collection_run_id)
+    if collection_run_id is None:
+        database_rows.sort(key=lambda row: int(row["review_id"]))
+    for database_row in database_rows:
         if database_row["processing_status"] in {"purged", "error"}:
             continue
         if database_row["dataset_status"] == "excluded":
@@ -233,7 +237,14 @@ def write_labels_template(
             )
             for field in LABEL_CONTEXT_FIELDS
         }
-        rows.append({"sample_id": database_row["sample_id"], **context, **values})
+        rows.append(
+            {
+                "review_id": database_row["review_id"],
+                **context,
+                **values,
+                "sample_id": database_row["sample_id"],
+            }
+        )
     _write_csv_atomic(destination, LABEL_FIELDS, rows)
 
 
@@ -277,9 +288,10 @@ def _calculate_dataset_status(row: Any, values: dict[str, str]) -> tuple[str, st
 def apply_labels_csv(store: StateStore, labels_path: Path) -> int:
     pending_updates: list[tuple[str, dict[str, str]]] = []
     seen_sample_ids: set[str] = set()
+    seen_review_ids: set[int] = set()
     with labels_path.open("r", encoding="utf-8-sig", newline="") as source:
         reader = csv.DictReader(source)
-        missing = set(LABEL_FIELDS) - set(reader.fieldnames or [])
+        missing = (set(LABEL_FIELDS) - {"review_id"}) - set(reader.fieldnames or [])
         if missing:
             raise ValueError(f"Labels CSV is missing columns: {sorted(missing)}")
         for line_number, label_row in enumerate(reader, start=2):
@@ -290,6 +302,23 @@ def apply_labels_csv(store: StateStore, labels_path: Path) -> int:
             database_row = store.get(sample_id)
             if database_row is None:
                 raise ValueError(f"Line {line_number}: unknown sample_id {sample_id!r}")
+            review_id_text = (label_row.get("review_id") or "").strip()
+            if review_id_text:
+                try:
+                    review_id = int(review_id_text)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Line {line_number}: review_id must be a positive integer"
+                    ) from exc
+                if review_id < 1:
+                    raise ValueError(f"Line {line_number}: review_id must be a positive integer")
+                if review_id in seen_review_ids:
+                    raise ValueError(f"Line {line_number}: duplicate review_id {review_id}")
+                seen_review_ids.add(review_id)
+                if review_id != int(database_row["review_id"]):
+                    raise ValueError(
+                        f"Line {line_number}: review_id {review_id} does not match sample_id"
+                    )
             values = {field: label_row[field].strip() for field in LABEL_EDIT_FIELDS}
             if values["speaker_status"] not in SPEAKER_STATUSES:
                 raise ValueError(

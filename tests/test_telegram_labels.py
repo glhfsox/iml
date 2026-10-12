@@ -60,6 +60,45 @@ def write_labels(path: Path, rows: list[dict[str, str]]) -> None:
 
 
 class LabelTests(unittest.TestCase):
+    def test_combined_review_template_is_sorted_by_permanent_review_id(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = StateStore(root / "state.sqlite3")
+            try:
+                first = make_ready_for_labels(store, "first")
+                second = store.begin_candidate(
+                    Candidate(
+                        source_type="telegram_export",
+                        source_chat_id="chat",
+                        source_message_id="second",
+                        message_date_utc=datetime(2025, 1, 1, tzinfo=UTC),
+                        media_type="voice",
+                        sender_id="sender",
+                        extension=".ogg",
+                    ),
+                    "later_run",
+                    "confirmed_other",
+                    consent_ref="consent_batch_01",
+                )
+                store.update(
+                    second["sample_id"],
+                    processing_status="indexed",
+                    dedupe_status="unique",
+                    qc_status="pass",
+                    quality_decision="accept",
+                )
+                destination = root / "labels.csv"
+                write_labels_template(store, destination)
+                with destination.open(encoding="utf-8") as source:
+                    rows = list(csv.DictReader(source))
+                self.assertEqual(
+                    [row["sample_id"] for row in rows],
+                    [first["sample_id"], second["sample_id"]],
+                )
+                self.assertEqual([row["review_id"] for row in rows], ["1", "2"])
+            finally:
+                store.close()
+
     def test_review_template_prefills_unconfirmed_sender_and_day_hints(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -70,6 +109,7 @@ class LabelTests(unittest.TestCase):
                 write_labels_template(store, destination)
                 with destination.open(encoding="utf-8") as source:
                     label = next(csv.DictReader(source))
+                self.assertEqual(label["review_id"], "1")
                 self.assertEqual(label["sender_ref_hint"], row["sender_ref"])
                 self.assertEqual(label["speaker_ref"], row["sender_ref"])
                 self.assertEqual(label["session_ref"], "day_2026-10-06")

@@ -274,6 +274,7 @@ def _finish_collection(project: DatasetProject, run_id: str, selected_count: int
         run_id,
         speaker_aliases_path=project.paths.private / "speaker_aliases.csv",
     )
+    all_labels_path = _write_all_labels(project)
     is_pilot = project.store.is_first_run(run_id)
     markdown_path, _, report = save_report(
         project.store, project.paths.reports, run_id, pilot=is_pilot
@@ -286,6 +287,7 @@ def _finish_collection(project: DatasetProject, run_id: str, selected_count: int
     print(f"Общая длительность: {report['total_duration_seconds']} с")
     print(f"Metadata: {project.paths.metadata_csv}")
     print(f"Таблица проверки говорящих: {labels_path}")
+    print(f"Общая таблица проверки: {all_labels_path}")
     print(f"Отчёт: {markdown_path}")
     if is_pilot and selected_count < 20:
         print("В выбранном интервале найдено меньше 20 подходящих сообщений.")
@@ -410,6 +412,7 @@ async def _collect_telegram_async(args: argparse.Namespace) -> int:
             start_utc,
             end_utc,
             include_video_notes=args.include_video_notes,
+            direction=args.direction,
         )
         items, skipped_by_duration = _filter_by_duration(
             items, args.min_duration, args.max_duration
@@ -537,8 +540,10 @@ def command_report(args: argparse.Namespace) -> int:
 
 def command_export_labels(args: argparse.Namespace) -> int:
     with DatasetProject(Path(args.project_root)) as project:
-        run_id = args.run_id or project.store.latest_run_id()
-        destination = project.paths.labels / f"speaker_labels_{run_id or 'all'}.csv"
+        run_id = None if args.all else (args.run_id or project.store.latest_run_id())
+        destination = project.paths.labels / (
+            "speaker_labels_all.csv" if args.all else f"speaker_labels_{run_id}.csv"
+        )
         write_labels_template(
             project.store,
             destination,
@@ -553,9 +558,22 @@ def command_apply_labels(args: argparse.Namespace) -> int:
     with DatasetProject(Path(args.project_root)) as project:
         changed = apply_labels_csv(project.store, Path(args.labels).expanduser().resolve())
         write_metadata_csv(project.store, project.paths.metadata_csv)
+        all_labels_path = _write_all_labels(project)
         print(f"Обновлено строк: {changed}")
         print(f"Metadata: {project.paths.metadata_csv}")
+        print(f"Общая таблица проверки: {all_labels_path}")
     return 0
+
+
+def _write_all_labels(project: DatasetProject) -> Path:
+    destination = project.paths.labels / "speaker_labels_all.csv"
+    write_labels_template(
+        project.store,
+        destination,
+        None,
+        speaker_aliases_path=project.paths.private / "speaker_aliases.csv",
+    )
+    return destination
 
 
 def command_split(args: argparse.Namespace) -> int:
@@ -587,16 +605,32 @@ def command_build_trials(args: argparse.Namespace) -> int:
 
 
 def command_purge(args: argparse.Namespace) -> int:
+    identifier = str(args.identifier).strip()
     confirmation = (
         args.confirm
-        or input(
-            f"Для безвозвратного удаления медиа повторите sample_id {args.sample_id}: "
-        ).strip()
+        or input(f"Для безвозвратного удаления медиа повторите ID {identifier}: ").strip()
     )
-    if confirmation != args.sample_id:
-        raise ValueError("Confirmation does not match sample_id; nothing was deleted")
+    if confirmation != identifier:
+        raise ValueError("Confirmation does not match the ID; nothing was deleted")
     with DatasetProject(Path(args.project_root)) as project:
-        removed, related_duplicates = project.purge(args.sample_id)
+        if identifier.isdecimal():
+            row = project.store.get_by_review_id(int(identifier))
+            if row is None:
+                raise ValueError(f"Unknown review_id: {identifier}")
+            sample_id = str(row["sample_id"])
+        else:
+            sample_id = identifier
+        removed, related_duplicates = project.purge(sample_id)
+        run_id = project.store.latest_run_id()
+        if run_id:
+            labels_path = project.paths.labels / f"speaker_labels_{run_id}.csv"
+            write_labels_template(
+                project.store,
+                labels_path,
+                run_id,
+                speaker_aliases_path=project.paths.private / "speaker_aliases.csv",
+            )
+        _write_all_labels(project)
         print(f"Удалено локальных файлов: {len(removed)}")
         print("В приватной базе оставлен минимальный tombstone против повторного импорта.")
         if related_duplicates:
@@ -626,6 +660,7 @@ def command_video_notes_policy(args: argparse.Namespace) -> int:
                 run_id,
                 pilot=project.store.is_first_run(run_id),
             )
+        _write_all_labels(project)
         action = "возвращены" if enabled else "исключены"
         print(f"Кружки {action} из обучающей выборки: {changed}")
         print("Исходные и производные файлы не удалялись.")
@@ -651,6 +686,7 @@ def command_reassess_quality(args: argparse.Namespace) -> int:
                 pilot=project.store.is_first_run(run_id),
             )
             print(f"Таблица проверки говорящих: {labels_path}")
+        _write_all_labels(project)
         print(
             "Оценка качества: "
             f"accept={counts['accept']}, review={counts['review']}, "
@@ -755,6 +791,15 @@ def build_parser() -> argparse.ArgumentParser:
         "collect-telegram", help="Собрать данные напрямую из выбранных Telegram-чатов"
     )
     _add_collection_arguments(telegram)
+    telegram.add_argument(
+        "--direction",
+        choices=("both", "incoming", "outgoing"),
+        default="both",
+        help=(
+            "Какие сообщения собирать: both — обе стороны, incoming — только "
+            "собеседники, outgoing — только владелец аккаунта"
+        ),
+    )
     telegram.set_defaults(handler=command_collect_telegram)
 
     export = subparsers.add_parser(
@@ -771,7 +816,11 @@ def build_parser() -> argparse.ArgumentParser:
     labels = subparsers.add_parser(
         "export-labels", help="Создать таблицу ручной проверки говорящих"
     )
-    labels.add_argument("--run-id")
+    label_scope = labels.add_mutually_exclusive_group()
+    label_scope.add_argument("--run-id")
+    label_scope.add_argument(
+        "--all", action="store_true", help="Собрать все активные записи в одну таблицу"
+    )
     labels.set_defaults(handler=command_export_labels)
 
     apply_labels = subparsers.add_parser(
@@ -796,9 +845,11 @@ def build_parser() -> argparse.ArgumentParser:
     trials.add_argument("--seed", type=int, default=42)
     trials.set_defaults(handler=command_build_trials)
 
-    purge = subparsers.add_parser("purge", help="Удалить медиа одной записи после отзыва согласия")
-    purge.add_argument("sample_id")
-    purge.add_argument("--confirm", help="Повторите точный sample_id")
+    purge = subparsers.add_parser(
+        "purge", help="Удалить медиа одной записи по числовому review_id или sample_id"
+    )
+    purge.add_argument("identifier")
+    purge.add_argument("--confirm", help="Повторите точный ID")
     purge.set_defaults(handler=command_purge)
 
     video_policy = subparsers.add_parser(

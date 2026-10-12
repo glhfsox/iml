@@ -11,7 +11,7 @@ from typing import Any
 
 from .models import Candidate
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 
 
 class StateStore:
@@ -55,6 +55,7 @@ class StateStore:
 
             CREATE TABLE IF NOT EXISTS recordings (
                 sample_id TEXT PRIMARY KEY,
+                review_id INTEGER UNIQUE,
                 schema_version TEXT NOT NULL,
                 collection_run_id TEXT NOT NULL,
                 source_recording_id TEXT NOT NULL,
@@ -160,6 +161,7 @@ class StateStore:
             row[1] for row in self.connection.execute("PRAGMA table_info(recordings)")
         }
         migrations = {
+            "review_id": "INTEGER",
             "task_type": "TEXT NOT NULL DEFAULT 'speaker_verification'",
             "access_role": "TEXT NOT NULL DEFAULT 'unassigned'",
             "session_ref": "TEXT NOT NULL DEFAULT ''",
@@ -176,6 +178,10 @@ class StateStore:
             if column not in recording_columns:
                 self.connection.execute(f"ALTER TABLE recordings ADD COLUMN {column} {definition}")
         self.connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_recordings_review_id ON recordings(review_id)"
+        )
+        self._backfill_review_ids()
+        self.connection.execute(
             "UPDATE settings SET value = ? WHERE key = 'schema_version'",
             (SCHEMA_VERSION,),
         )
@@ -188,6 +194,48 @@ class StateStore:
             (os.urandom(32).hex(),),
         )
         self.connection.commit()
+
+    def _backfill_review_ids(self) -> None:
+        """Assign permanent human-facing numbers without reusing retired records."""
+        next_id = int(
+            self.connection.execute(
+                "SELECT COALESCE(MAX(review_id), 0) + 1 FROM recordings"
+            ).fetchone()[0]
+        )
+        seen: set[str] = set()
+        ordered = self.connection.execute(
+            """
+            SELECT recordings.sample_id
+              FROM collection_runs
+              JOIN collection_run_items USING (run_id)
+              JOIN recordings USING (sample_id)
+             WHERE recordings.review_id IS NULL
+             ORDER BY collection_runs.rowid, collection_run_items.position, recordings.rowid
+            """
+        )
+        sample_ids = [str(row[0]) for row in ordered]
+        sample_ids.extend(
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT sample_id FROM recordings WHERE review_id IS NULL ORDER BY rowid"
+            )
+        )
+        for sample_id in sample_ids:
+            if sample_id in seen:
+                continue
+            seen.add(sample_id)
+            self.connection.execute(
+                "UPDATE recordings SET review_id = ? WHERE sample_id = ? AND review_id IS NULL",
+                (next_id, sample_id),
+            )
+            next_id += 1
+
+    def _next_review_id(self) -> int:
+        return int(
+            self.connection.execute(
+                "SELECT COALESCE(MAX(review_id), 0) + 1 FROM recordings"
+            ).fetchone()[0]
+        )
 
     def setting(self, key: str) -> str:
         row = self.connection.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
@@ -209,6 +257,12 @@ class StateStore:
         consent_ref: str = "",
         _commit: bool = True,
     ) -> sqlite3.Row:
+        existing = self.get_by_source(candidate)
+        review_id = (
+            int(existing["review_id"])
+            if existing is not None and existing["review_id"] is not None
+            else self._next_review_id()
+        )
         identity = (
             f"{candidate.source_type}|{candidate.source_chat_id}|{candidate.source_message_id}"
         )
@@ -232,6 +286,7 @@ class StateStore:
         )
         values = {
             "sample_id": source_recording_id,
+            "review_id": review_id,
             "schema_version": SCHEMA_VERSION,
             "collection_run_id": collection_run_id,
             "source_recording_id": source_recording_id,
@@ -326,6 +381,11 @@ class StateStore:
     def get(self, sample_id: str) -> sqlite3.Row | None:
         return self.connection.execute(
             "SELECT * FROM recordings WHERE sample_id = ?", (sample_id,)
+        ).fetchone()
+
+    def get_by_review_id(self, review_id: int) -> sqlite3.Row | None:
+        return self.connection.execute(
+            "SELECT * FROM recordings WHERE review_id = ?", (review_id,)
         ).fetchone()
 
     def update(self, sample_id: str, **values: Any) -> None:

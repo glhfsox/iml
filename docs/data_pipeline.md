@@ -102,12 +102,24 @@ uv run voice-dataset collect-telegram \
 
 The first collection must be a 20-message pilot. A later batch uses `--next-batch --limit N` and
 the same stable `--chat-ref` values. Ordinary voice messages are the default; video notes are
-opt-in. Login values are requested in the local terminal with hidden input, and the session is
-stored at `data/private/telegram.session`.
+opt-in. Direct Telegram collection can use `--direction incoming` to collect only messages sent
+by the other participant, which is useful when the account owner's voice dominates the chats.
+Login values are requested in the local terminal with hidden input, and the session is stored at
+`data/private/telegram.session`.
 
 The review CSV includes the WAV path, date, duration and quality fields. It suggests
 `speaker_ref` from Telegram's pseudonymous sender and `session_ref` from the recording day, but
 keeps `speaker_status=unreviewed` and `manual_review_status=pending`.
+
+Every completed collection writes a batch-specific review CSV and refreshes
+`data/labels/speaker_labels_all.csv`. The latter contains every active recording across all
+collection runs, so it is the easiest place to review the current dataset as a whole. It can also
+be regenerated with `voice-dataset export-labels --all`.
+
+The first column, `review_id`, is a permanent numeric number intended for listening and manual
+discussion. Numbers increase across collection batches and are never reused, even after a record
+is purged. The technical `sample_id` remains in the last column so resume, deduplication and
+traceability do not break.
 
 For shorter local codes, create the ignored private file
 `data/private/speaker_aliases.csv` with columns `chat_ref,sender_ref,speaker_ref`. A row with
