@@ -58,6 +58,23 @@ def test_valid_dataset_passes(tiny):
     assert fingerprint(tiny)["counts"]["train"] == {"allowed": 2, "not_allowed": 2}
 
 
+@pytest.mark.parametrize("label", [0, 1])
+def test_single_class_dataset_is_valid(tmp_path, label):
+    """Contract v2: a dataset (and every split) may hold one class, e.g. an enrollment bank."""
+    rows = {s: [(f"{s}{k}.wav", label) for k in range(3)] for s in ("train", "val", "test")}
+    _write_dataset(tmp_path, rows)
+    assert validate_dataset(tmp_path) == []
+    counts = fingerprint(tmp_path)["counts"]
+    assert counts["val"] == {"allowed": 3 * label, "not_allowed": 3 * (1 - label)}
+
+
+def test_fingerprint_hash_unchanged_by_v2():
+    """The v2 bump must not change dataset sha1s, or every finished run would need retraining."""
+    from iml.data import contract
+
+    assert contract.CONTRACT_VERSION == 2 and contract.FINGERPRINT_SALT == "contract1"
+
+
 @pytest.mark.parametrize(
     "breakage, expected",
     [
@@ -73,12 +90,6 @@ def test_valid_dataset_passes(tiny):
                 "path,allowed\naudio/val0.wav,1\naudio/test1.wav,0\n"
             ),
             "already listed",
-        ),
-        (
-            lambda d: (d / "test.csv").write_text(
-                "path,allowed\naudio/test0.wav,1\naudio/test2.wav,1\n"
-            ),
-            "both classes",
         ),
         (
             lambda d: (d / "test.csv").write_text("path,allowed\n../x.wav,1\naudio/test1.wav,0\n"),
@@ -173,14 +184,67 @@ def test_build_end_to_end(tmp_path):
         build(tmp_path / "sources.csv", tmp_path / "ds")
     # a failing rebuild leaves the previous dataset untouched
     before = fingerprint(tmp_path / "ds")
-    pd.DataFrame(src).assign(allowed=1).to_csv(tmp_path / "bad.csv", index=False)
-    with pytest.raises(ValueError, match="both classes"):
+    bad = pd.DataFrame(src)
+    bad.loc[0, "allowed"] = 1 - bad.loc[0, "allowed"]  # one speaker with both labels
+    bad.to_csv(tmp_path / "bad.csv", index=False)
+    with pytest.raises(ValueError, match="both allowed=0 and 1"):
         build(tmp_path / "bad.csv", tmp_path / "ds", overwrite=True)
     assert fingerprint(tmp_path / "ds") == before and validate_dataset(tmp_path / "ds") == []
     # raw recordings inside the output folder are refused, never deleted
     with pytest.raises(ValueError, match="inside the output folder"):
         build(tmp_path / "sources.csv", tmp_path, overwrite=True)
     assert (tmp_path / "recordings" / "A0.wav").exists()
+
+
+def test_build_single_class_sources(tmp_path):
+    """Contract v2: sources where every speaker is allowed=1 build into a valid dataset."""
+    src = []
+    for spk in ("A", "B"):
+        for i in range(4):
+            p = tmp_path / "recordings" / f"{spk}{i}.wav"
+            p.parent.mkdir(exist_ok=True)
+            sf.write(
+                p, _speechy(12.0, hash((spk, i)) % 1000, pause_every=4.0), SR, subtype="PCM_16"
+            )
+            src.append(dict(path=f"recordings/{spk}{i}.wav", speaker=spk, allowed=1))
+    pd.DataFrame(src).to_csv(tmp_path / "sources.csv", index=False)
+    build(tmp_path / "sources.csv", tmp_path / "ds", seed=0)
+    assert validate_dataset(tmp_path / "ds") == []
+    counts = fingerprint(tmp_path / "ds")["counts"]
+    assert all(c["not_allowed"] == 0 and c["allowed"] > 0 for c in counts.values()), counts
+
+
+@pytest.mark.parametrize("split", ["train", "val"])
+def test_load_splits_refuses_single_class_training_split(tiny, split):
+    (tiny / f"{split}.csv").write_text(
+        f"path,allowed\naudio/{split}1.wav,1\naudio/{split}3.wav,1\n"
+    )
+    assert validate_dataset(tiny) == []  # valid under the contract ...
+    cfg = ExperimentConfig(batch_size=2, num_workers=0)
+    with pytest.raises(ValueError, match=f"split {split} has only allowed=1; training needs both"):
+        load_splits(cfg, data_dir=tiny)  # ... but not trainable
+
+
+def test_iml_train_fails_early_on_single_class_dataset(tiny, tmp_path):
+    from iml.cli.train import main
+
+    for split in ("train", "val", "test"):  # an enrollment-bank-like dataset: all allowed=1
+        (tiny / f"{split}.csv").write_text(
+            f"path,allowed\naudio/{split}1.wav,1\naudio/{split}3.wav,1\n"
+        )
+    ExperimentConfig(width=4, epochs=1, batch_size=2, num_workers=0).to_json(tmp_path / "c.json")
+    runs = tmp_path / "runs"
+    with pytest.raises(ValueError, match="split train has only allowed=1; training needs both"):
+        main(["--config", str(tmp_path / "c.json"), "--data", str(tiny), "--runs-root", str(runs)])
+    assert not list(runs.rglob("metrics.json"))
+
+
+def test_load_splits_warns_on_single_class_test(tiny):
+    (tiny / "test.csv").write_text("path,allowed\naudio/test0.wav,0\naudio/test2.wav,0\n")
+    cfg = ExperimentConfig(batch_size=2, num_workers=0)
+    with pytest.warns(UserWarning, match="split test has only allowed=0"):
+        loaders = load_splits(cfg, data_dir=tiny)
+    assert set(loaders) == {"train", "val", "test"}
 
 
 def test_load_splits_and_run_data_guard(tiny, tmp_path):

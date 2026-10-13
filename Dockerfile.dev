@@ -30,12 +30,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$USERNAME \
     && install -d -o $USERNAME -g $USERNAME /opt/venv
 
-# venv lives outside the checkout, owned by the user so `uv sync` / `uv add` work in the workspace
+# venv lives outside the checkout, owned by the user so `uv sync` / `uv add` work in the workspace;
+# MLflow server of the workspace: `make mlflow-up` in the checkout (supervised; the repo is not in the image)
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
     VIRTUAL_ENV=/opt/venv \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
-    PATH=/opt/venv/bin:$PATH
+    PATH=/opt/venv/bin:$PATH \
+    MLFLOW_TRACKING_URI=http://localhost:5000
 
 USER $USERNAME
 WORKDIR /home/$USERNAME
@@ -44,6 +46,6 @@ WORKDIR /home/$USERNAME
 RUN --mount=type=cache,target=/home/coder/.cache/uv,uid=1000,gid=1000 \
     --mount=type=bind,source=pyproject.toml,target=/tmp/deps/pyproject.toml \
     --mount=type=bind,source=uv.lock,target=/tmp/deps/uv.lock \
-    uv sync --project /tmp/deps --frozen --no-install-project --group dev --group export
+    uv sync --project /tmp/deps --frozen --no-install-project --group dev --group export --group data
 
 CMD ["bash"]

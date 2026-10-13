@@ -27,11 +27,11 @@ uv run python -c "import torch; print(torch.cuda.is_available(), torch.version.h
 ## Layout
 
 ```
-src/iml/        shared library: config, 5 models, data, metrics, train loop, run folders, MLflow, CLIs
+src/iml/        shared library: config, 5 models, data, metrics, train loop, run folders, CLIs
 app/            production side: load one best model and classify a recording (app/models/ = frozen weights)
 notebooks/      one folder per member: main.py (demo) + comparisons/<topic>/experiments.ipynb
 configs/        baseline json per model + grids/ for sweeps (gitignored: regenerate with `make configs` or share by hand)
-runs/           <member>/<topic>/<run_name>/  — results; not in git (shared via MLflow and `make pull-runs`)
+runs/           <member>/<topic>/<run_name>/  — results; not in git (shared via `make pull-runs`)
 data/           raw recordings (gitignored); datasets follow DATA_CONTRACT.md
 tests/          pytest
 docs/architecture/map.jsonl   component map
@@ -84,15 +84,10 @@ Data: every dataset follows [DATA_CONTRACT.md](DATA_CONTRACT.md) (`train/val/tes
 `path,allowed` + 3 s clips). Build one with `iml-data build`, check it with `iml-data validate`, and
 train on it with `--data <dataset>` (or `$IML_DATA`); in notebooks `load_splits(cfg, data_dir=...)`.
 
-## MLflow (server)
-
-```bash
-make mlflow-ui                                   # on the server: sqlite backend, port 5000
-export MLFLOW_TRACKING_URI=http://localhost:5000 # on the server, before iml-train / notebooks
-ssh -L 5000:localhost:5000 <server>              # locally, then open http://localhost:5000
-```
-
-Without `MLFLOW_TRACKING_URI` nothing is tracked; the run folder is always the source of truth.
+`data/our_voices` is a collage of only our own recordings, with no external or LibriSpeech speakers. Allowed:
+team members M, P, T and D. Not allowed: S (accent recordings). It is glhfsox v1 plus the new P recordings from
+`data/training_dataset_v2`, deduplicated per recording, with v1's splits and labels kept. The speaker banks for
+zero-shot identification are built from it.
 
 ## Server workflow
 

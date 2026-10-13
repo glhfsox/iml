@@ -1,4 +1,4 @@
-# Data contract (v1)
+# Data contract (v2)
 
 Every dataset the team trains or evaluates on has this shape. Whoever produces a dataset guarantees
 everything below; whoever consumes it can rely on it and needs nothing else.
@@ -11,7 +11,6 @@ everything below; whoever consumes it can rely on it and needs nothing else.
   val.csv
   test.csv
   audio/...wav          # any layout under the folder; referenced from the CSVs
-  build_report.json     # optional, informational only (how it was built); not part of the contract
 ```
 
 Each CSV has exactly two columns, in this order:
@@ -24,7 +23,7 @@ Each CSV has exactly two columns, in this order:
 ```csv
 path,allowed
 audio/rec_0929b045510095ce_000480.wav,1
-audio/S_british_001200.wav,0
+audio/N174_174-168635-0003_000600.wav,0
 ```
 
 ## Guarantees
@@ -44,9 +43,11 @@ audio/S_british_001200.wav,0
 - Each speaker's recordings are spread over train/val/test at about 70/15/15 of speech duration;
   val and test only get recordings that yield at least one clip, and at least one recording stays in
   train. A speaker with fewer than 3 usable recordings goes to train only. Recordings that yield no
-  clip are dropped (listed in `build_report.json`).
+  clip are dropped (`iml-data build` prints how many).
 - Train clips overlap by 50 % (hop 1.5 s). Val/test clips don't overlap (hop 3 s).
-- Train, val and test each contain both classes.
+- Classes are optional: a dataset, and each of its splits, may hold only `allowed = 1` or only
+  `allowed = 0` (e.g. `data/our_voices`, all of us, used to build enrollment banks). Training
+  requires both classes in train and val (see below).
 
 ## Producing and checking a dataset
 
@@ -67,7 +68,7 @@ Raw input is a folder with the recordings and, right next to them, the CSV that 
 ```csv
 path,speaker,allowed
 recordings/rec_0929b045510095ce.wav,M,1
-recordings/S_british.m4a,S,0
+recordings/N174_174-168635-0003.flac,N174,0
 ```
 
 - `path` is relative to `sources.csv`: always `recordings/<file>` (POSIX, no `..`, no absolute paths).
@@ -91,7 +92,9 @@ uv run iml-train --config configs/cnn10.json --data <dataset> --member <you> --t
 export IML_DATA=<dataset>                                         # or once per shell
 ```
 
-- `load_splits` validates the folder and builds one `SpectrogramDataset` per split.
+- `load_splits` validates the folder and builds one `SpectrogramDataset` per split. It refuses a
+  dataset whose train or val split lacks a class (FAR/FRR/EER and the decision threshold are
+  undefined without both) and warns if test does (its FAR/FRR/EER are then NaN).
 - `ExperimentConfig.excerpt_sec` defaults to 3.0, the clip length, so nothing is cropped or padded.
   Configs generated before this change still say 2.0: re-run `make configs`.
 - Each run writes the dataset fingerprint (manifests + clip bytes) to `data.json`. A finished run is
@@ -103,11 +106,15 @@ export IML_DATA=<dataset>                                         # or once per 
 ## Changing the contract
 
 Any change to the guarantees above bumps `CONTRACT_VERSION` in `src/iml/data/contract.py` and the
-version in this file's title. Datasets record the version they were built with in `build_report.json`.
+version in this file's title.
 
-## Known limitations of the first dataset (glhfsox v1)
+- v2: single-class datasets and splits are valid (v1 required both classes in every split). Every v1
+  dataset is a valid v2 dataset with the same fingerprint, so finished runs stay reusable.
 
-- The only `allowed = 0` speaker (S) was recorded on a different phone and codec (AAC `.m4a`) than the
-  allowed speakers (Telegram Opus voice notes). A model can learn the **channel** instead of the voice.
-  Add negatives recorded the same way as positives before trusting FAR.
-- With a single negative speaker, the test set does not measure rejection of unseen people.
+## Known limitations
+
+- Speaker S of the first dataset (glhfsox v1) was renamed MS and is now `allowed = 1`: one of us. v1
+  therefore has no `allowed = 0` speaker left; it is valid under v2 but can't be trained on alone.
+- MS was recorded on a different phone and codec (AAC `.m4a`) than the other allowed speakers
+  (Telegram Opus voice notes), and the strangers (N) come from yet another source. A model can learn
+  the **channel** instead of the voice; record negatives the same way as positives before trusting FAR.

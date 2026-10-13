@@ -45,3 +45,11 @@ def smoke_data(tmp_path_factory):
     return write_contract_dataset(
         tmp_path_factory.mktemp("smoke"), {"train": 128, "val": 64, "test": 64}
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_shared_mlflow(monkeypatch):
+    """Tests never log to the shared MLflow server (Dockerfile.dev sets MLFLOW_TRACKING_URI);
+    a test that wants tracking sets its own uri."""
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    monkeypatch.delenv("IML_TRACKING", raising=False)

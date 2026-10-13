@@ -17,7 +17,6 @@ Pipeline (``build``):
 
 from __future__ import annotations
 
-import json
 import posixpath
 import re
 import shutil
@@ -207,13 +206,13 @@ def read_sources(sources_csv: str | Path) -> pd.DataFrame:
 def build(
     sources_csv: str | Path, out_dir: str | Path, seed: int = 42, overwrite: bool = False
 ) -> dict:
-    """Build a contract dataset in ``out_dir``; returns the build report (also written as JSON).
+    """Build a contract dataset in ``out_dir``; returns a build summary (not written to disk).
 
     Everything is decoded, split and checked first and written into a temporary sibling folder;
     only a complete dataset replaces the old one (``overwrite``), so a failed build changes nothing.
     """
     out = Path(out_dir).resolve()
-    targets = ["audio", *(f"{s}.csv" for s in SPLITS), "build_report.json"]
+    targets = ["audio", *(f"{s}.csv" for s in SPLITS)]
     existing = [t for t in targets if (out / t).exists()]
     if existing and not overwrite:
         raise FileExistsError(f"{out} already has {existing} (pass overwrite=True to replace)")
@@ -244,14 +243,7 @@ def build(
         clip_starts(r.active, HOP_FRAMES[s]) if s else []
         for r, s in zip(recs, table.split, strict=True)
     ]
-    for split in SPLITS:
-        labels = {
-            r.allowed for r, s, k in zip(recs, table.split, starts, strict=True) if s == split and k
-        }
-        if labels != {0, 1}:
-            raise ValueError(
-                f"split {split!r} would have labels {sorted(labels)}; both classes are required"
-            )
+    # contract v2: a split may hold one class (e.g. an enrollment bank with allowed=1 only)
 
     tmp = out.parent / f".{out.name}.building"
     shutil.rmtree(tmp, ignore_errors=True)
@@ -306,10 +298,6 @@ def build(
             orient="records"
         ),
     )
-    (tmp / "build_report.json").write_text(
-        json.dumps(report, indent=2, ensure_ascii=False, default=int)
-    )
-
     # swap the finished dataset in: old targets -> backup, new -> out, drop the backup
     out.mkdir(parents=True, exist_ok=True)
     backup = out.parent / f".{out.name}.previous"

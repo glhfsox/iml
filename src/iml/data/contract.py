@@ -2,7 +2,8 @@
 
 A dataset is a folder with ``train.csv``, ``val.csv`` and ``test.csv`` (header exactly
 ``path,allowed``) and the clips they point to: 16 kHz mono PCM16 WAVs of exactly 3 s.
-``allowed`` is 1 (let in) or 0.
+``allowed`` is 1 (let in) or 0. Since contract v2 a dataset (and each split) may hold a single
+class, e.g. an enrollment bank of allowed speakers only; training needs both (``iml.cli._data``).
 """
 
 from __future__ import annotations
@@ -14,7 +15,12 @@ from pathlib import Path, PurePosixPath
 import pandas as pd
 import soundfile as sf
 
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2
+# Salt of the fingerprint hash. Deliberately NOT tied to CONTRACT_VERSION: v2 only relaxed a check
+# (single-class splits are valid), the bytes of a dataset mean the same, so a dataset hashes as
+# under v1 and runs recorded with v1 (data.json) are still reused. Change it only when the same
+# bytes start to mean different data.
+FINGERPRINT_SALT = "contract1"
 SPLITS = ("train", "val", "test")
 COLUMNS = ["path", "allowed"]
 SAMPLE_RATE = 16000
@@ -48,7 +54,7 @@ def fingerprint(data_dir: str | Path) -> dict:
     """Identifies a dataset version: hash of the three manifests and every clip's bytes, plus
     per-split class counts."""
     d = Path(data_dir)
-    h = hashlib.sha1(f"contract{CONTRACT_VERSION}".encode())
+    h = hashlib.sha1(FINGERPRINT_SALT.encode())
     counts = {}
     for s in SPLITS:
         h.update((d / f"{s}.csv").read_bytes())
@@ -86,10 +92,6 @@ def validate_dataset(data_dir: str | Path, check_audio: bool = True) -> list[str
         bad = df[~df.allowed.isin(["0", "1"])]
         if len(bad):
             errors.append(f"{split}.csv: allowed must be 0 or 1 (rows {bad.index[:5].tolist()})")
-        if set(df.allowed) != {"0", "1"}:
-            errors.append(
-                f"{split}.csv: both classes must be present, got {sorted(set(df.allowed))}"
-            )
         for p in df.path:
             pp = PurePosixPath(p)
             if not p or pp.is_absolute() or ".." in pp.parts or "\\" in p:

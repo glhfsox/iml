@@ -13,6 +13,10 @@ __pycache__/
 *.flac
 *.mp3
 *.mp4
+*.m4a
+notebooks/glhfsox/dataset/
+notebools/glhfsox/eda
+*.mmd
 
 #mlflow experiment tracking
 runs/
