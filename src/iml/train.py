@@ -3,13 +3,22 @@
 Features: optimizer/scheduler from config, AMP on the GPU (HIP/ROCm or CUDA), gradient
 clipping, early stopping and checkpoint selection on validation EER, best/last checkpoints,
 per-epoch history, a decision threshold chosen on the validation set (FAR == FRR point) and
-FAR/FRR/EER on every split at that threshold, optional Monte-Carlo dropout, optional MLflow.
+FAR/FRR/EER on every split at that threshold, optional Monte-Carlo dropout, optional MLflow,
+and a verified ``model.onnx`` next to ``best.pt`` (``cfg.export_onnx``).
+
+The device and reproducibility helpers every run uses sit at the top: ``get_device`` /
+``device_info`` / ``GPU`` (AMD GPU via HIP (ROCm) or NVIDIA via CUDA -> Apple MPS -> CPU) and
+``seed_everything``.
 """
 
 from __future__ import annotations
 
 import math
+import os
+import platform
+import random
 import time
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -20,12 +29,14 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from iml.config import ExperimentConfig
-from iml.device import GPU, get_device
-from iml.metrics import classification_metrics, eer
-from iml.models import build_model, count_params
+from iml.export import export_onnx, export_verified
+from iml.models import build_model, check_knobs, count_params
+from iml.models.spec import describe_spec
 from iml.runs import (
     RUNS_ROOT,
     RunRecord,
+    classification_metrics,
+    eer,
     load_checkpoint,
     load_run,
     plot_history,
@@ -35,8 +46,77 @@ from iml.runs import (
     save_json,
     write_env,
 )
-from iml.seed import seed_everything
 from iml.tracking import Tracker
+
+# =================================================================================================
+# device: pick the best available device: AMD GPU via HIP (ROCm) or NVIDIA via CUDA -> Apple MPS
+# -> CPU.
+#
+# PyTorch exposes the HIP backend under the ``"cuda"`` device name (``torch.device("hip")``
+# does not exist), so on the ROCm server ``get_device()`` returns ``cuda`` and the AMD card is
+# used. ``torch.version.hip`` tells the two apart; env.json records it.
+# =================================================================================================
+
+GPU = "cuda"  # device string PyTorch uses for both HIP (ROCm) and CUDA
+_ALIASES = {"hip": GPU, "rocm": GPU, "gpu": GPU}
+
+
+def is_hip() -> bool:
+    """True when this torch build runs on ROCm (AMD GPU through HIP)."""
+    return getattr(torch.version, "hip", None) is not None
+
+
+def get_device(prefer: str | None = None) -> torch.device:
+    """Return ``torch.device``; ``prefer`` forces a backend ("hip"/"cuda", "mps", "cpu")."""
+    if prefer is not None:
+        return torch.device(_ALIASES.get(prefer.lower(), prefer))
+    if torch.cuda.is_available():  # HIP on ROCm builds, CUDA on NVIDIA builds
+        return torch.device(GPU)
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def device_info(device: torch.device) -> dict[str, Any]:
+    """Human-readable facts about the device, saved into every run's env.json."""
+    info: dict[str, Any] = {
+        "device": str(device),
+        "backend": ("hip" if is_hip() else "cuda") if device.type == GPU else device.type,
+        "torch": torch.__version__,
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+    }
+    if device.type == GPU:
+        info["gpu"] = torch.cuda.get_device_name(0)
+        info["hip"] = getattr(torch.version, "hip", None)  # ROCm version on AMD builds
+        info["cuda"] = torch.version.cuda  # None on ROCm builds
+    return info
+
+
+# =================================================================================================
+# seed: reproducibility helpers
+# =================================================================================================
+
+
+def seed_everything(seed: int, deterministic: bool = False) -> None:
+    """Seed python, numpy and torch (all devices).
+
+    ``deterministic=True`` additionally disables cuDNN autotuning; slower but bit-reproducible
+    on the same hardware. Leave it off for sweeps where speed matters more.
+    """
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = not deterministic
+    torch.backends.cudnn.deterministic = deterministic
+
+
+# =================================================================================================
+# training loop
+# =================================================================================================
 
 
 def build_optimizer(cfg: ExperimentConfig, model: nn.Module) -> torch.optim.Optimizer:
@@ -175,6 +255,23 @@ def train_one_epoch(model, loader, optimizer, device, scaler, cfg, weight) -> fl
     return total / max(1, n)
 
 
+def _export_run_onnx(out: Path, verbose: bool) -> float | None:
+    """``best.pt`` -> ``model.onnx`` next to it, verified against PyTorch before it gets its name;
+    a failure only warns and leaves no graph behind."""
+    path = out / "model.onnx"
+    try:
+        diff = export_verified(path, lambda tmp: export_onnx(out, tmp), run=out)
+    except Exception as e:  # the run itself is fine; the graph can be re-exported by hand
+        warnings.warn(
+            f"ONNX export of {out.name} failed ({e}); use `iml-export --run {out}`", stacklevel=2
+        )
+        return None
+    if verbose:
+        mb = path.stat().st_size / 1e6
+        print(f"model.onnx written ({mb:.1f} MB, max |onnx - torch| {diff:.1e})")
+    return diff
+
+
 def fit(
     cfg: ExperimentConfig,
     loaders: dict[str, DataLoader],
@@ -192,6 +289,9 @@ def fit(
     """
     if "train" not in loaders:
         raise ValueError("loaders must contain 'train'")
+    check_knobs(cfg)  # fail before a run folder exists
+    if cfg.model == "custom":
+        describe_spec(cfg.arch)  # validates the block list
     select_split = "val" if "val" in loaders else "train"
     out = run_dir(cfg, root)
     if (out / "metrics.json").exists():
@@ -203,6 +303,7 @@ def fit(
     device = device or get_device()
     seed_everything(cfg.seed)
     out.mkdir(parents=True, exist_ok=True)
+    (out / "model.onnx").unlink(missing_ok=True)  # never ship a previous run's graph
     cfg.to_json(out / "config.json")
     write_env(out / "env.json", device)
 
@@ -296,9 +397,12 @@ def fit(
         best_epoch,
         {"decision_threshold": threshold, **metrics[select_split]},
     )
-    save_json(metrics, out / "metrics.json")
     df = save_history(history, out)
     plot_history(df, out)
+    save_json(metrics, out / "metrics.json")  # the run is complete here; ONNX is an extra
+    if cfg.export_onnx:
+        metrics["onnx_max_abs_diff"] = _export_run_onnx(out, verbose)
+        save_json(metrics, out / "metrics.json")
     final = {f"{s}_{k}": v for s in loaders for k, v in metrics[s].items()}
     final["decision_threshold"] = threshold
     tracker.log_metrics(

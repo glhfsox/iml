@@ -6,23 +6,23 @@ from iml.config import ExperimentConfig
 
 
 def test_json_roundtrip(tmp_path):
-    cfg = ExperimentConfig(model="cnn10", lr=0.01, augment={"time_mask": 20}, tags=["a"])
+    cfg = ExperimentConfig(model="efficientnetv2_s", lr=0.01, augment={"time_mask": 20}, tags=["a"])
     cfg.to_json(tmp_path / "c.json")
     assert ExperimentConfig.from_json(tmp_path / "c.json") == cfg
 
 
 def test_run_name_is_stable_and_readable():
-    a = ExperimentConfig(bn_position="after", lr=0.01)
-    b = ExperimentConfig(bn_position="after", lr=0.01, member="x", topic="y")  # bookkeeping differs
-    assert a.run_name() == b.run_name()
-    assert a.run_name().startswith("simple_cnn_bn-position-after_lr0.01_")
-    assert a.run_name() != ExperimentConfig(bn_position="after", lr=0.02).run_name()
+    a = ExperimentConfig(model="convnext_tiny", dropout=0.2, lr=0.01)
+    b = ExperimentConfig(model="convnext_tiny", dropout=0.2, lr=0.01, member="x", topic="y")
+    assert a.run_name() == b.run_name()  # bookkeeping differs
+    assert a.run_name().startswith("convnext_tiny_dropout0.2_lr0.01_")
+    assert a.run_name() != ExperimentConfig(model="convnext_tiny", dropout=0.2, lr=0.02).run_name()
 
 
 def test_default_run_name_has_no_slug():
     name = ExperimentConfig().run_name()
-    assert name.count("_") == 2  # simple_cnn + hash only
-    assert name.startswith("simple_cnn_")
+    assert name.count("_") == 1  # resnet18 + hash only
+    assert name.startswith("resnet18_")
 
 
 def test_overrides_parse_types():
@@ -64,7 +64,7 @@ def test_json_file_is_flat_and_complete(tmp_path):
 def test_device_hip_alias_and_info():
     import torch
 
-    from iml.device import GPU, device_info, get_device
+    from iml.train import GPU, device_info, get_device
 
     assert get_device("hip") == torch.device(GPU) == get_device("cuda")
     assert get_device("cpu").type == "cpu"

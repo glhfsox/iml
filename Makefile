@@ -2,21 +2,21 @@
 SERVER ?= server
 REMOTE_DIR ?= ~/iml
 
-.PHONY: install test lint smoke sync pull-runs mlflow-ui export export-all freeze configs
+.PHONY: install test lint smoke sync pull-runs mlflow-ui mlflow-up mlflow-down mlflow-status
 
 install:            ## create .venv with all deps (HIP/ROCm torch on the linux server, PyPI torch on macOS)
 	uv sync --group dev --group data
 
-test:               ## unit + smoke tests
+test:               ## fast tests (config, metrics, data contract); models are checked by GPU runs
 	uv run pytest
 
 lint:
-	uv run ruff check src tests app notebooks
+	uv run ruff check src tests app notebooks tg
 
 DATA ?= $(IML_DATA)
 smoke:              ## DATA=<dataset>: two short runs on a contract dataset, then compare them
-	uv run iml-train --config configs/simple_cnn.json --data $(DATA) --set epochs=3 --member smoke --topic data
-	uv run iml-train --config configs/cnn10.json --data $(DATA) --set epochs=3 --member smoke --topic data
+	uv run iml-train --config app/models/configs/resnet18.json --data $(DATA) --set epochs=3 --set pretrained=false --member smoke --topic data
+	uv run iml-train --config app/models/configs/convnext_tiny.json --data $(DATA) --set epochs=3 --set pretrained=false --member smoke --topic data
 	uv run iml-compare runs/smoke/data
 
 sync:               ## push code + configs to the server (no data, no runs, no venv)
@@ -25,26 +25,23 @@ sync:               ## push code + configs to the server (no data, no runs, no v
 pull-runs:          ## fetch run folders (json/csv/png + weights) from the server
 	rsync -az $(SERVER):$(REMOTE_DIR)/runs/ runs/
 
-mlflow-ui:          ## on the server: start MLflow on sqlite; locally: ssh -L 5000:localhost:5000 $(SERVER)
-	uv run mlflow server --backend-store-uri sqlite:///mlruns.db --default-artifact-root ./mlartifacts --host 0.0.0.0 --port 5000
+# glhfsox's MLflow: store, artifacts, supervisor and its state all live in notebooks/glhfsox/mlflow/.
+# Artifacts are uploaded through the server (mlflow-artifacts:/ -> mlartifacts/), so notebooks in any
+# working directory store them in the same place. Same args as notebooks/glhfsox/mlflow/supervise.sh.
+MLFLOW_DIR = notebooks/glhfsox/mlflow
+MLFLOW_CMD = cd $(MLFLOW_DIR) && uv run mlflow server --backend-store-uri sqlite:///mlruns.db --artifacts-destination ./mlartifacts --host 0.0.0.0 --port 5000
 
-# --- model artifacts -------------------------------------------------------------------
-RUN ?= runs
+mlflow-ui:          ## on the server: start MLflow on sqlite (foreground); locally: ssh -L 5000:localhost:5000 $(SERVER)
+	$(MLFLOW_CMD)
 
-export:             ## RUN=runs/<member>/<topic>/<run>: best.pt -> model.onnx, verified against pytorch
-	uv run --group export iml-export --run $(RUN)
+mlflow-up:          ## always-on MLflow: start the supervisor (restarts the server on exit) unless running
+	@$(MLFLOW_DIR)/supervise.sh up
 
-export-all:         ## export every finished run that has no model.onnx yet
-	@for d in $$(find runs -name best.pt -exec dirname {} \;); do \
-		[ -f $$d/model.onnx ] || uv run --group export iml-export --run $$d; done
+mlflow-down:        ## stop the supervisor and the server
+	@$(MLFLOW_DIR)/supervise.sh down
 
-freeze:             ## RUN=runs/...: copy best.pt + config.json into app/models/speaker_verification/<model>/ and export ONNX there
-	@dst=app/models/speaker_verification/$$(uv run python -c "import json; print(json.load(open('$(RUN)/config.json'))['model'])"); \
-	cp $(RUN)/best.pt $(RUN)/config.json $$dst/ && echo "frozen into $$dst" && \
-	uv run --group export iml-export --run $$dst
+mlflow-status:      ## supervisor pid, /health, log path ($(MLFLOW_DIR)/state/mlflow.log)
+	@$(MLFLOW_DIR)/supervise.sh status
 
-configs:            ## regenerate the baseline json config per model (configs/ is gitignored)
-	mkdir -p configs
-	uv run python -c "from iml.config import ExperimentConfig as C; \
-	[C(model=m, member='anon', topic='baseline', **e).to_json(f'configs/{m}.json') for m, e in \
-	{'simple_cnn': {}, 'cnn10': dict(depth=4, dropout=0.2), 'resnet18': dict(lr=5e-4), 'mobilenet_v2': dict(dropout=0.2), 'ecapa_tdnn': dict(init='default')}.items()]"
+# model artifacts (configs, ONNX export, freeze into app/models/speaker_verification/<model>/):
+include app/models/Makefile

@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pytest
 
-from iml.metrics import classification_metrics, eer, far, frr
+from iml.runs import classification_metrics, eer, far, frr
 
 
 def test_far_counts_only_class0():

@@ -1,4 +1,4 @@
-# Data contract (v2)
+# Data contract (v3)
 
 Every dataset the team trains or evaluates on has this shape. Whoever produces a dataset guarantees
 everything below; whoever consumes it can rely on it and needs nothing else.
@@ -10,7 +10,7 @@ everything below; whoever consumes it can rely on it and needs nothing else.
   train.csv
   val.csv
   test.csv
-  audio/...wav          # any layout under the folder; referenced from the CSVs
+  audio/...npy          # any layout under the folder; referenced from the CSVs
 ```
 
 Each CSV has exactly two columns, in this order:
@@ -22,15 +22,15 @@ Each CSV has exactly two columns, in this order:
 
 ```csv
 path,allowed
-audio/rec_0929b045510095ce_000480.wav,1
-audio/N174_174-168635-0003_000600.wav,0
+audio/rec_0929b045510095ce_000480.npy,1
+audio/N174_174-168635-0003_000600.npy,0
 ```
 
 ## Guarantees
 
 **Clips**
-- WAV, PCM 16-bit, 16 kHz, mono, **exactly 48 000 samples (3.000 s)**.
-- Loudness is the source's: no gain or loudness normalization.
+- `.npy` (NumPy array file) of dtype int16, shape **exactly (48 000,)**, i.e. 16 kHz mono PCM16
+  samples of 3.000 s; loudness is the source's (no gain or loudness normalization).
 - At least **60 % speech** per clip. Speech = 20 ms frames whose level exceeds max(−45 dBFS, p20 + 8 dB),
   with p20 the 20th percentile of frame levels over the whole source recording. Silence before the first
   and after the last speech frame of a recording is trimmed. The producer guarantees this; it can't be
@@ -75,20 +75,20 @@ recordings/N174_174-168635-0003.flac,N174,0
 - The file name (without extension) is the recording id, so it must be unique; clip names start with it.
 - `allowed` is `1`/`0` and must be the same for all recordings of a speaker.
 
-The pipeline lives in `src/iml/data/preprocess.py`:
+The pipeline lives in `src/iml/preprocess.py`:
 1. decode to 16 kHz mono int16, the Telegram collector's recipe;
 2. VAD and trimming;
 3. per-speaker split by whole recordings;
-4. 3 s windows with the speech threshold.
+4. 3 s windows with the speech threshold, saved as int16 `.npy` clips.
 
 A build is atomic: it is written to a temporary folder and only a complete, valid dataset replaces the
 old one, so a failed `--overwrite` leaves the previous dataset intact. Raw recordings must not live
-inside the output folder. The validator lives in `src/iml/data/contract.py`.
+inside the output folder. The validator lives in `src/iml/data.py`.
 
 ## Using a dataset
 
 ```bash
-uv run iml-train --config configs/cnn10.json --data <dataset> --member <you> --topic <topic>
+uv run iml-train --config app/models/configs/resnet18.json --data <dataset> --member <you> --topic <topic>
 export IML_DATA=<dataset>                                         # or once per shell
 ```
 
@@ -101,20 +101,20 @@ export IML_DATA=<dataset>                                         # or once per 
   only reused for the same dataset; for other data, or for runs from before data tracking (no
   `data.json`), `iml-train`/`iml-sweep` stop and ask for `--overwrite`.
 - In notebooks: `load_splits(cfg, data_dir=DATA)`, and `check_run_data` / `record_run_data` from
-  `iml.cli._data` for the same guard (see `notebooks/_template`).
+  `iml.cli` for the same guard (see `notebooks/_template`).
 
 ## Changing the contract
 
-Any change to the guarantees above bumps `CONTRACT_VERSION` in `src/iml/data/contract.py` and the
+Any change to the guarantees above bumps `CONTRACT_VERSION` in `src/iml/data.py` and the
 version in this file's title.
 
+- v3: clips are `.npy` int16 arrays instead of WAV. Same samples, different bytes, so the fingerprint
+  salt changed and runs recorded on v2 datasets are not reused.
 - v2: single-class datasets and splits are valid (v1 required both classes in every split). Every v1
   dataset is a valid v2 dataset with the same fingerprint, so finished runs stay reusable.
 
 ## Known limitations
 
-- Speaker S of the first dataset (glhfsox v1) was renamed MS and is now `allowed = 1`: one of us. v1
-  therefore has no `allowed = 0` speaker left; it is valid under v2 but can't be trained on alone.
 - MS was recorded on a different phone and codec (AAC `.m4a`) than the other allowed speakers
   (Telegram Opus voice notes), and the strangers (N) come from yet another source. A model can learn
   the **channel** instead of the voice; record negatives the same way as positives before trusting FAR.

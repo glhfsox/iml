@@ -6,26 +6,41 @@ one JSON file and its folder name is derived from the *differences* from the def
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
+import warnings
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-MODEL_NAMES = ("simple_cnn", "cnn10", "resnet18", "mobilenet_v2", "ecapa_tdnn")
+MODEL_NAMES = (
+    "resnet18",
+    "efficientnetv2_s",
+    "convnext_tiny",
+    "resnest26d",
+    "regnet_y_800mf",
+    "custom",
+)
+
+# Architecture knobs of the old hand-written models; old checkpoints may still carry them.
+_LEGACY_KEYS = {"width", "depth", "bn_position", "activation"}
 
 # Fields that do not change the experiment itself and are excluded from the run name/hash.
-_BOOKKEEPING = {"member", "topic", "tags", "notes", "num_workers"}
+_BOOKKEEPING = {"member", "topic", "tags", "notes", "num_workers", "export_onnx"}
 
 
 @dataclass
 class ExperimentConfig:
     """All hyper-parameters of one training run.
 
-    Attributes are grouped by what they control; the dataclass defaults are the
-    ``simple_cnn`` baseline. Per-model baselines (e.g. ``depth=4`` for cnn10) live in
-    ``configs/<model>.json`` (``make configs``). Knobs a model does not use must stay at
-    their default, otherwise ``build_model`` refuses the config (no fake comparisons).
+    Attributes are grouped by what they control; the dataclass defaults are the ``resnet18``
+    baseline. Per-model baselines live in ``app/models/configs/<model>.json`` (``make configs``).
+    All models are ImageNet CNNs sharing the same knobs: ``pretrained`` (ImageNet weights),
+    ``init`` (applied only when training from scratch; ``build_model`` rejects a non-default
+    ``init`` together with ``pretrained=True``) and ``dropout`` (before the final classifier).
+    ``model="custom"`` is assembled from ``arch`` (``iml.models.spec.build_from_spec``)
+    and needs ``pretrained=False``.
     """
 
     # --- identity / bookkeeping ---
@@ -35,23 +50,22 @@ class ExperimentConfig:
     notes: str = ""
 
     # --- model ---
-    model: str = "simple_cnn"  # one of MODEL_NAMES
-    width: int = 32  # base number of channels
-    depth: int = 2  # number of conv blocks (simple_cnn: 1-4, cnn10: 2-6)
-    bn_position: str = "before"  # before | after | none (relative to the activation)
-    activation: str = "relu"  # relu | sigmoid | gelu
-    init: str = "he"  # he | xavier | uniform | default
-    dropout: float = 0.0
-    pretrained: bool = False  # resnet18 / mobilenet_v2 only: ImageNet weights (transfer learning)
+    model: str = "resnet18"  # one of MODEL_NAMES
+    init: str = "he"  # he | xavier | uniform | default; only when pretrained=False
+    dropout: float = 0.0  # dropout before the final classifier (stochastic depth not exposed)
+    pretrained: bool = True  # ImageNet weights (transfer learning); False = from scratch
+    # model="custom" only: declarative block list, see iml/models/README.md.
+    # custom has no ImageNet weights, so its configs must set pretrained=false explicitly.
+    arch: list[dict[str, Any]] = field(default_factory=list)
 
     # --- input / spectrogram ---
     sample_rate: int = 16000
     excerpt_sec: float = 3.0  # length of one excerpt (= the 3 s clips of DATA_CONTRACT.md)
     n_fft: int = 512
     hop_length: int = 160  # 10 ms at 16 kHz
-    n_mels: int = 64
+    n_mels: int = 80
     normalize_input: str = "per_sample"  # none | per_sample | global
-    augment: dict[str, Any] = field(default_factory=dict)  # see iml.data.augment (later)
+    augment: dict[str, Any] = field(default_factory=dict)  # see iml.data.SpectrogramDataset (later)
 
     # --- optimisation ---
     optimizer: str = "adam"  # sgd | adam | adamw
@@ -73,10 +87,18 @@ class ExperimentConfig:
 
     # --- evaluation ---
     mc_dropout_samples: int = 0  # >0: Monte-Carlo dropout with that many stochastic passes
+    export_onnx: bool = True  # write + verify <run>/model.onnx at the end of fit (iml.export)
 
     def __post_init__(self) -> None:
         if self.model not in MODEL_NAMES:
             raise ValueError(f"unknown model {self.model!r}; expected one of {MODEL_NAMES}")
+        if not isinstance(self.arch, list | tuple):
+            raise ValueError(f"arch must be a list of layer dicts, got {type(self.arch).__name__}")
+        self.arch = copy.deepcopy(list(self.arch))  # never alias a caller's (shared) spec
+        if self.model == "custom" and not self.arch:
+            raise ValueError('model="custom" needs a non-empty arch (list of layer dicts)')
+        if self.model != "custom" and self.arch:
+            raise ValueError(f"arch is only used by model='custom'; {self.model} needs arch=[]")
         if self.epochs < 1:
             raise ValueError("epochs must be >= 1")
         if self.mc_dropout_samples > 0 and self.dropout <= 0:
@@ -93,6 +115,12 @@ class ExperimentConfig:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ExperimentConfig:
+        legacy = sorted(_LEGACY_KEYS & set(d))
+        if legacy:
+            warnings.warn(
+                f"dropping legacy config keys {legacy} (removed model knobs)", stacklevel=2
+            )
+            d = {k: v for k, v in d.items() if k not in _LEGACY_KEYS}
         known = {f.name for f in fields(cls)}
         unknown = set(d) - known
         if unknown:
@@ -129,7 +157,8 @@ class ExperimentConfig:
     # ------------------------------------------------------------------ naming
     def diff_from_default(self) -> dict[str, Any]:
         """Experiment-relevant fields whose value differs from the default."""
-        default = ExperimentConfig(model=self.model).to_dict()
+        default = ExperimentConfig(model=self.model, arch=self.arch).to_dict()
+        default["arch"] = []  # a custom arch always counts as a difference
         mine = self.to_dict()
         return {
             k: v
@@ -142,7 +171,7 @@ class ExperimentConfig:
         return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:n]
 
     def run_name(self, max_slug: int = 60) -> str:
-        """``<model>_<slug of non-default fields>_<hash>``, e.g. ``simple_cnn_lr0.01_3f9a1c``.
+        """``<model>_<slug of non-default fields>_<hash>``, e.g. ``resnet18_lr0.01_3f9a1c``.
 
         The hash guarantees uniqueness; the slug is only there to make folders readable.
         """

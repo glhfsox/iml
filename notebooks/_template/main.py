@@ -1,6 +1,7 @@
 """<member>'s entry point to the production code with one chosen run.
 
-Copy this folder to notebooks/<your-name>/ and point RUN at the run you want to demo:
+Copy this folder to notebooks/<your-name>/ (experiments live in
+notebooks/<member>/<arch>/experiments.ipynb) and point RUN at the run you want to demo:
     uv run python notebooks/<your-name>/main.py --wav path/to/recording.wav
 """
 
@@ -15,8 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root -> `ap
 from app.main import load_model  # noqa: E402
 
 # A frozen model name (app/models/speaker_verification/<name>/ after `make freeze`)
-# or a run folder runs/<member>/<topic>/<run_name>.
-RUN = "simple_cnn"
+# or a run folder runs/<member>/<arch>/<run_name>.
+RUN = "resnet18"
 
 
 def main() -> None:

@@ -1,4 +1,5 @@
 # env
+.env
 .venv/
 __pycache__/
 *.pyc
@@ -6,6 +7,8 @@ __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
 .DS_Store
+.mypy_cache
+
 
 # data
 /data/
@@ -21,10 +24,13 @@ notebools/glhfsox/eda
 #mlflow experiment tracking
 runs/
 *.pt
+*.onnx
 mlruns/
 mlruns.db
 mlartifacts/
+notebooks/glhfsox/mlflow/state/
 *.pdf
-configs/
-*.onnx
-app/models/**/config.json
+app/models/configs/
+
+
+tg/

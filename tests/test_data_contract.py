@@ -1,4 +1,4 @@
-"""Data contract (iml.data.contract), the preprocessing that produces it and load_splits on top."""
+"""Data contract (iml.data), the preprocessing that produces it and load_splits on top."""
 
 from __future__ import annotations
 
@@ -7,10 +7,10 @@ import pandas as pd
 import pytest
 import soundfile as sf
 
-from iml.cli._data import check_run_data, load_splits
+from iml.cli import check_run_data, load_splits
 from iml.config import ExperimentConfig
-from iml.data.contract import fingerprint, validate_dataset
-from iml.data.preprocess import (
+from iml.data import fingerprint, validate_dataset
+from iml.preprocess import (
     FRAME,
     assign_splits,
     build,
@@ -40,7 +40,7 @@ def _write_dataset(d, rows: dict[str, list[tuple[str, int]]]):
     (d / "audio").mkdir(parents=True, exist_ok=True)
     for split, items in rows.items():
         for i, (name, _) in enumerate(items):
-            sf.write(d / "audio" / name, _speechy(3.5, i)[-48000:], SR, subtype="PCM_16")
+            np.save(d / "audio" / name, _speechy(3.5, i)[-48000:])
         pd.DataFrame(items, columns=["path", "allowed"]).assign(
             path=lambda x: "audio/" + x.path
         ).to_csv(d / f"{split}.csv", index=False)
@@ -48,7 +48,7 @@ def _write_dataset(d, rows: dict[str, list[tuple[str, int]]]):
 
 @pytest.fixture
 def tiny(tmp_path):
-    rows = {s: [(f"{s}{k}.wav", k % 2) for k in range(4)] for s in ("train", "val", "test")}
+    rows = {s: [(f"{s}{k}.npy", k % 2) for k in range(4)] for s in ("train", "val", "test")}
     _write_dataset(tmp_path, rows)
     return tmp_path
 
@@ -61,56 +61,60 @@ def test_valid_dataset_passes(tiny):
 @pytest.mark.parametrize("label", [0, 1])
 def test_single_class_dataset_is_valid(tmp_path, label):
     """Contract v2: a dataset (and every split) may hold one class, e.g. an enrollment bank."""
-    rows = {s: [(f"{s}{k}.wav", label) for k in range(3)] for s in ("train", "val", "test")}
+    rows = {s: [(f"{s}{k}.npy", label) for k in range(3)] for s in ("train", "val", "test")}
     _write_dataset(tmp_path, rows)
     assert validate_dataset(tmp_path) == []
     counts = fingerprint(tmp_path)["counts"]
     assert counts["val"] == {"allowed": 3 * label, "not_allowed": 3 * (1 - label)}
 
 
-def test_fingerprint_hash_unchanged_by_v2():
-    """The v2 bump must not change dataset sha1s, or every finished run would need retraining."""
-    from iml.data import contract
+def test_fingerprint_salt_and_clip_sensitivity(tiny):
+    """v3 changed the clip bytes (npy instead of wav), so the salt changed; and the fingerprint
+    covers every clip's bytes."""
+    from iml import data as contract
 
-    assert contract.CONTRACT_VERSION == 2 and contract.FINGERPRINT_SALT == "contract1"
+    assert contract.CONTRACT_VERSION == 3 and contract.FINGERPRINT_SALT == "contract3"
+    before = fingerprint(tiny)["sha1"]
+    x = np.load(tiny / "audio/train0.npy")
+    x[0] ^= 1
+    np.save(tiny / "audio/train0.npy", x)
+    assert fingerprint(tiny)["sha1"] != before
 
 
 @pytest.mark.parametrize(
     "breakage, expected",
     [
-        (lambda d: (d / "val.csv").write_text("file,label\naudio/val0.wav,1\n"), "header"),
+        (lambda d: (d / "val.csv").write_text("file,label\naudio/val0.npy,1\n"), "header"),
         (
             lambda d: (d / "val.csv").write_text(
-                "path,allowed\naudio/val0.wav,2\naudio/val1.wav,0\n"
+                "path,allowed\naudio/val0.npy,2\naudio/val1.npy,0\n"
             ),
             "0 or 1",
         ),
         (
             lambda d: (d / "test.csv").write_text(
-                "path,allowed\naudio/val0.wav,1\naudio/test1.wav,0\n"
+                "path,allowed\naudio/val0.npy,1\naudio/test1.npy,0\n"
             ),
             "already listed",
         ),
         (
-            lambda d: (d / "test.csv").write_text("path,allowed\n../x.wav,1\naudio/test1.wav,0\n"),
+            lambda d: (d / "test.csv").write_text("path,allowed\n../x.npy,1\naudio/test1.npy,0\n"),
             "relative POSIX",
         ),
+        (lambda d: np.save(d / "audio/train0.npy", np.zeros(32000, np.int16)), "exactly (48000,)"),
+        (lambda d: np.save(d / "audio/train0.npy", np.zeros(48000, np.float32)), "int16"),
+        (lambda d: np.save(d / "audio/train0.npy", np.zeros((48000, 2), np.int16)), "exactly"),
+        (lambda d: (d / "audio/train0.npy").write_bytes(b"RIFF...."), "unreadable"),
         (
-            lambda d: sf.write(
-                d / "audio/train0.wav", np.zeros(32000, np.int16) + 3000, SR, subtype="PCM_16"
+            lambda d: (d / "test.csv").write_text(
+                "path,allowed\naudio/x.wav,1\naudio/test1.npy,0\n"
             ),
-            "exactly 48000",
-        ),
-        (
-            lambda d: sf.write(
-                d / "audio/train0.wav", np.zeros(48000, np.int16) + 3000, 8000, subtype="PCM_16"
-            ),
-            "sample rate",
+            "contract v2",
         ),
         (lambda d: (d / "val.csv").write_text(""), "header"),
         (
             lambda d: (d / "test.csv").write_text(
-                "path,allowed\naudio//val0.wav,1\naudio/test1.wav,0\n"
+                "path,allowed\naudio//val0.npy,1\naudio/test1.npy,0\n"
             ),
             "normalized",
         ),
@@ -217,7 +221,7 @@ def test_build_single_class_sources(tmp_path):
 @pytest.mark.parametrize("split", ["train", "val"])
 def test_load_splits_refuses_single_class_training_split(tiny, split):
     (tiny / f"{split}.csv").write_text(
-        f"path,allowed\naudio/{split}1.wav,1\naudio/{split}3.wav,1\n"
+        f"path,allowed\naudio/{split}1.npy,1\naudio/{split}3.npy,1\n"
     )
     assert validate_dataset(tiny) == []  # valid under the contract ...
     cfg = ExperimentConfig(batch_size=2, num_workers=0)
@@ -226,21 +230,26 @@ def test_load_splits_refuses_single_class_training_split(tiny, split):
 
 
 def test_iml_train_fails_early_on_single_class_dataset(tiny, tmp_path):
-    from iml.cli.train import main
+    from iml.cli import train_main
 
     for split in ("train", "val", "test"):  # an enrollment-bank-like dataset: all allowed=1
         (tiny / f"{split}.csv").write_text(
-            f"path,allowed\naudio/{split}1.wav,1\naudio/{split}3.wav,1\n"
+            f"path,allowed\naudio/{split}1.npy,1\naudio/{split}3.npy,1\n"
         )
-    ExperimentConfig(width=4, epochs=1, batch_size=2, num_workers=0).to_json(tmp_path / "c.json")
+    cfg = ExperimentConfig(epochs=1, batch_size=2, num_workers=0)
+    if hasattr(cfg, "pretrained"):
+        cfg.pretrained = False  # never download weights (fails before building a model anyway)
+    cfg.to_json(tmp_path / "c.json")
     runs = tmp_path / "runs"
     with pytest.raises(ValueError, match="split train has only allowed=1; training needs both"):
-        main(["--config", str(tmp_path / "c.json"), "--data", str(tiny), "--runs-root", str(runs)])
+        train_main(
+            ["--config", str(tmp_path / "c.json"), "--data", str(tiny), "--runs-root", str(runs)]
+        )
     assert not list(runs.rglob("metrics.json"))
 
 
 def test_load_splits_warns_on_single_class_test(tiny):
-    (tiny / "test.csv").write_text("path,allowed\naudio/test0.wav,0\naudio/test2.wav,0\n")
+    (tiny / "test.csv").write_text("path,allowed\naudio/test0.npy,0\naudio/test2.npy,0\n")
     cfg = ExperimentConfig(batch_size=2, num_workers=0)
     with pytest.warns(UserWarning, match="split test has only allowed=0"):
         loaders = load_splits(cfg, data_dir=tiny)
@@ -285,3 +294,26 @@ def test_sources_paths_must_be_inside_recordings(tmp_path, path):
         tmp_path / "s.csv", index=False
     )
     assert read_sources(tmp_path / "s.csv").recording_id.tolist() == ["a"]
+
+
+def test_wav_paths_rejected_without_audio_check(tiny):
+    """A v2 (WAV) manifest is refused even by the cheap check that load_splits runs."""
+    (tiny / "audio/x.wav").write_bytes(b"")
+    (tiny / "val.csv").write_text("path,allowed\naudio/x.wav,1\naudio/val1.npy,0\n")
+    errors = validate_dataset(tiny, check_audio=False)
+    assert any("contract v2" in e and ".npy" in e for e in errors), errors
+
+
+def test_build_writes_npy_clips(tmp_path):
+    src = []
+    for i in range(3):
+        p = tmp_path / "recordings" / f"A{i}.wav"
+        p.parent.mkdir(exist_ok=True)
+        sf.write(p, _speechy(12.0, i, pause_every=4.0), SR, subtype="PCM_16")
+        src.append(dict(path=f"recordings/A{i}.wav", speaker="A", allowed=1))
+    pd.DataFrame(src).to_csv(tmp_path / "sources.csv", index=False)
+    build(tmp_path / "sources.csv", tmp_path / "ds", seed=0)
+    paths = pd.read_csv(tmp_path / "ds/train.csv").path
+    assert len(paths) and all(p.endswith(".npy") for p in paths)
+    x = np.load(tmp_path / "ds" / paths[0])
+    assert x.dtype == np.int16 and x.shape == (48000,)
