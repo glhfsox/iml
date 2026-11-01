@@ -1,0 +1,1 @@
+runs/petr/resnet18_lr/resnet18_batch-size16_dropout0.2_early-stopping-patience4_epochs12_lr_d04b64

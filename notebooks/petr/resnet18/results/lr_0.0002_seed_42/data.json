@@ -1,0 +1,19 @@
+{
+  "data_dir": "/mnt/shared-data/training_dataset_v2",
+  "contract_version": 3,
+  "sha1": "10ac1fb033e3b1845bc52ea2e2229c2982ad11f0",
+  "counts": {
+    "train": {
+      "allowed": 228,
+      "not_allowed": 285
+    },
+    "val": {
+      "allowed": 28,
+      "not_allowed": 35
+    },
+    "test": {
+      "allowed": 28,
+      "not_allowed": 35
+    }
+  }
+}
