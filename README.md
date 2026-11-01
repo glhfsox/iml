@@ -2,18 +2,18 @@
 
 Binary task from the course project description (`2026_2027_IML_project_descr.pdf`):
 class 1 = allowed person, class 0 = not allowed, input = log-mel spectrogram of a short
-recording, models = CNNs trained from scratch, metrics = FAR / FRR on train, val and test.
+recording, models = CNNs trained from scratch or fine-tuned from ImageNet, metrics = FAR / FRR on train, val and test.
 
 ## Setup
 
 ```bash
 uv sync --group dev          # macOS: PyPI torch (MPS); Linux server: HIP/ROCm torch for the AMD GPU (see pyproject)
 uv run pytest                # fast CPU tests: config, metrics, data contract (no model building: models are checked by real GPU runs)
-make smoke DATA=<dataset>    # two short runs + comparison table under runs/smoke/
+make smoke DATA=data/training_dataset_v2    # two short runs + comparison table under runs/smoke/
 ```
 
-On the AMD server check the ROCm version first (`rocm-smi --showversion`) and, if it is not
-6.4, change the `pytorch-rocm` index URL in `pyproject.toml` (e.g. `.../whl/rocm6.3`).
+The Linux PyTorch index in `pyproject.toml` currently targets ROCm 7.2. Check compatibility
+with the training server GPU and driver before changing that index.
 
 GPU note: PyTorch drives the AMD card through HIP but names the device `cuda`
 (`torch.device("hip")` does not exist). `get_device()` picks it automatically, `--device hip`
@@ -32,7 +32,7 @@ app/            production side: load one best model and classify a recording (a
 notebooks/      notebooks/<member>/main.py + <arch>/experiments.ipynb (one architecture, a grid of parameter configs)
 app/models/configs/  baseline json per model + grids/ for sweeps (gitignored: regenerate with `make configs` or share by hand)
 runs/           <member>/<topic>/<run_name>/  — results; not in git (shared via `make pull-runs`)
-data/           raw recordings (gitignored); datasets follow DATA_CONTRACT.md
+data/           shared processed datasets (gitignored); binary training uses training_dataset_v2/
 tests/          pytest (config, metrics, data contract; nothing trains or builds a model here)
 docs/architecture/map.jsonl   component map
 ```
@@ -63,9 +63,9 @@ not retrained.
 
 ```bash
 # one run, headless (use tmux on the server)
-uv run iml-train --config app/models/configs/resnet18.json --member <you> --topic optimizers --set optimizer=sgd --set lr=0.01
+uv run iml-train --config app/models/configs/resnet18.json --data data/training_dataset_v2 --member <you> --topic optimizers --set optimizer=sgd --set lr=0.01
 # a grid
-uv run iml-sweep --config app/models/configs/convnext_tiny.json --grid app/models/configs/grids/<arch>_lr.json --member <you> --topic lr
+uv run iml-sweep --config app/models/configs/convnext_tiny.json --grid app/models/configs/grids/<arch>_lr.json --data data/training_dataset_v2 --member <you> --topic lr
 # compare everything under a folder -> table.md/csv + loss.png + val_metrics.png
 uv run iml-compare runs/<you>/lr
 ```
@@ -90,21 +90,45 @@ With `pretrained=true` (the default) the ImageNet weights are loaded and `init` 
 `build_model` refuses `pretrained=true` with a non-default `init`: a sweep cannot produce fake
 comparisons. Set `pretrained=false` to train from scratch with the chosen `init`.
 
-Data: every dataset follows [DATA_CONTRACT.md](DATA_CONTRACT.md) (`train/val/test.csv` with
-`path,allowed` + 3 s clips stored as `.npy` int16 arrays of 48000 samples, contract v3). Build one with
-`iml-data build`, check it with `iml-data validate`, and train on it with `--data <dataset>` (or
-`$IML_DATA`); in notebooks `load_splits(cfg, data_dir=...)`.
+`data/training_dataset_v2` is currently the **single source of unified data for binary model
+training**. Select it with `--data data/training_dataset_v2` or set
+`IML_DATA=data/training_dataset_v2`; notebooks use `load_splits(cfg, data_dir=...)`.
+The loader reads only the selected folder and never merges datasets automatically.
 
-`data/our_voices` is a collage of only our own recordings, with no external or LibriSpeech speakers. Allowed:
-team members M, P, T, D and MS (renamed from S): our earlier voice notes plus the new P recordings from
-`data/training_dataset_v2`, deduplicated per recording. The speaker banks for
-zero-shot identification are built from it.
+As of 2026-11-01 it contains **639 preprocessed 3-second clips** from **259 source recording
+IDs**. Valid speakers M, P, MS and D each contribute **71 clips** (57 train, 7 val, 7 test),
+for 284 valid clips. Invalid clips total 355: 71 T clips and 284 clips from 40 external N
+speakers. Overall splits contain 513 train, 63 val and 63 test clips. These are clip counts,
+not counts of independent original recordings. **Recalculate and update these numbers when
+new data arrives or data, labels, splits, naming, or the contract changes.**
+
+Waveform datasets follow [DATA_CONTRACT.md](DATA_CONTRACT.md): `train/val/test.csv` with
+`path,allowed` plus `.npy` int16 arrays of 48,000 samples. CSV paths resolve relative to the
+dataset folder. Validate the current training source with:
+
+```bash
+uv run iml-data validate data/training_dataset_v2
+```
+
+MS was formerly named MH in `training_dataset_v2`; waveform comparisons confirmed the same
+source audio as MS in `our_voices`. D's 71 clips span all five D source recordings, preserving
+labels and splits. T has `allowed=0`. See the contract for the full count table and sampling.
+
+`data/our_voices` retains the broader team voice collection, including T negatives and anonymous
+clips with unresolved identities. It is not the unified training source; enrollment banks must
+filter to verified allowed speakers. `data/sv_*` uses speaker-identity Parquet manifests and
+precomputed spectrograms and cannot be loaded directly by `iml-train`.
+
+Original raw audio and source CSVs for the existing datasets are unavailable in this workspace
+and mounted data directory. `iml-data build` can build datasets from separately supplied raw
+recordings and labels; Telegram collector code exists only in Git history. The builder adds
+no noise/reverb/pitch augmentation, and `cfg.augment` is unused by the current training loader.
 
 ## Server workflow
 
 ```bash
 make sync SERVER=<ssh host>      # rsync code + configs (no data, runs, venv)
-ssh <server> 'cd iml && uv sync && tmux new -d -s train "uv run iml-train --config app/models/configs/resnet18.json --member me --topic x"'
+ssh <server> 'cd iml && uv sync && tmux new -d -s train "uv run iml-train --config app/models/configs/resnet18.json --data data/training_dataset_v2 --member me --topic x"'
 make pull-runs SERVER=<ssh host> # bring runs/ back
 ```
 
@@ -117,7 +141,7 @@ from the public ImageNet weights, then fine-tune and freeze your own:
 make init-models                                # 5 x app/models/speaker_verification/<model>/model.onnx from ImageNet
                                                 # weights (downloads once, deterministic; existing graphs are kept, FORCE=1 overwrites)
 make init-model MODEL=convnext_tiny             # the same for one model only (you work on one architecture)
-uv run iml-train --config app/models/configs/resnet18.json --data $IML_DATA --member <you> --topic <arch>
+uv run iml-train --config app/models/configs/resnet18.json --data data/training_dataset_v2 --member <you> --topic <arch>
 make freeze RUN=runs/<member>/<arch>/<run>      # replace the folder's model.onnx with the fine-tuned run's graph
 make export RUN=runs/<member>/<arch>/<run>      # (optional) re-export a run's model.onnx by hand; fit already does it
 uv run python -m app.main --model resnet18 --wav recording.wav                 # frozen graph, onnxruntime
