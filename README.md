@@ -108,13 +108,25 @@ ssh <server> 'cd iml && uv sync && tmux new -d -s train "uv run iml-train --conf
 make pull-runs SERVER=<ssh host> # bring runs/ back
 ```
 
-## Production demo
+## Model weights and the production demo
+
+Weights are not in git (`*.pt`, `*.onnx` are ignored). After a clone, build the starting graphs
+from the public ImageNet weights, then fine-tune and freeze your own:
 
 ```bash
-uv run python -m app.main --run runs/<member>/<topic>/<run> --wav recording.wav  # PyTorch best.pt (dev)
-make freeze RUN=runs/<member>/<topic>/<run>     # freeze: copy model.onnx into app/models/speaker_verification/<model>/
+make init-models                                # 5 x app/models/speaker_verification/<model>/model.onnx from ImageNet
+                                                # weights (downloads once, deterministic; existing graphs are kept, FORCE=1 overwrites)
+make init-model MODEL=convnext_tiny             # the same for one model only (you work on one architecture)
+uv run iml-train --config app/models/configs/resnet18.json --data $IML_DATA --member <you> --topic <arch>
+make freeze RUN=runs/<member>/<arch>/<run>      # replace the folder's model.onnx with the fine-tuned run's graph
+make export RUN=runs/<member>/<arch>/<run>      # (optional) re-export a run's model.onnx by hand; fit already does it
 uv run python -m app.main --model resnet18 --wav recording.wav                 # frozen graph, onnxruntime
+uv run python -m app.main --run runs/<member>/<arch>/<run> --wav recording.wav  # PyTorch best.pt (dev)
 ```
+
+All model targets live in `app/models/Makefile` (included by the root one): `configs`, `init-models`,
+`init-model`, `export`, `export-all`, `freeze`. Fine-tuned graphs are shared outside git (rsync to the server, or a
+release/LFS scheme if we add one); `make init-models` is always enough to run the app from scratch.
 
 A frozen model folder holds only `model.onnx`: the run's config and decision threshold are stored
 in the graph's metadata, and the app runs it with onnxruntime (log-mel front end in PyTorch on

@@ -4,7 +4,8 @@
 #   make configs                 make export RUN=runs/<member>/<arch>/<run>
 #   make export-all              make freeze RUN=runs/<member>/<arch>/<run>
 #   make init-models             stable pretrained model.onnx into every model folder
-.PHONY: configs export export-all freeze init-models
+#   make init-model MODEL=resnet18   the same for one model
+.PHONY: configs export export-all freeze init-models init-model
 
 PRETRAINED_MODELS = resnet18 efficientnetv2_s convnext_tiny resnest26d regnet_y_800mf
 
@@ -33,3 +34,7 @@ init-models:        ## stable starting point per model: ImageNet backbone + fres
 		f=app/models/speaker_verification/$$m/model.onnx; \
 		if [ -f $$f ] && [ -z "$(FORCE)" ]; then echo "keep $$f (FORCE=1 to overwrite)"; \
 		else uv run iml-export --pretrained $$m --out $$f || exit 1; fi; done
+
+init-model:         ## MODEL=<name>: one model's stable pretrained model.onnx (overwrites)
+	@test -n "$(MODEL)" || { echo "usage: make init-model MODEL=resnet18|efficientnetv2_s|convnext_tiny|resnest26d|regnet_y_800mf"; exit 1; }
+	uv run iml-export --pretrained $(MODEL) --out app/models/speaker_verification/$(MODEL)/model.onnx
