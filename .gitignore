@@ -8,7 +8,7 @@ __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 .mypy_cache
-
+*.json
 
 # data
 /data/
