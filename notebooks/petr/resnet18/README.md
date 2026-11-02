@@ -1,77 +1,86 @@
-# ResNet-18: обучение и результаты
+# ResNet-18 training experiments and results
 
-Ветка: feature/resnet18_training. База: main, коммит 50cf7a5.
-Архитектура: ResNet-18, 11.17 млн параметров. Выполнено одно проверочное обучение и пять основных прогонов.
+Branch: `feature/resnet18_training`. Base: `main`, commit `50cf7a5`.
+The model has 11.17 million parameters. The experiment includes one smoke run and five main training runs.
 
-## Что сделано
-1. Создана отдельная ветка от актуального main. Файлы ConvNeXt оставлены в workspace отдельно.
-2. Проверен датасет, сохранена отдельная локальная копия и fingerprint в dataset_snapshot.json.
-3. Обучена модель с тремя learning rate при остальных одинаковых настройках.
-4. По validation выбрана конфигурация, затем повторена с seed 43 и 44.
-5. Сохранены веса best.pt, экспортирован model.onnx и проверено совпадение ONNX с PyTorch.
-6. В results/ сохранены настройки, метрики, history.csv, сведения о данных/окружении и графики всех пяти прогонов.
+## Work completed
 
-## Данные и честность сравнения
-Источник: data/training_dataset_v2. Сейчас 513 train (228 своих, 285 чужих), 63 validation и 63 test (28 своих и 35 чужих в каждой).
-Общий датасет обновился после предыдущего эксперимента ConvNeXt: тогда было 456/56/56. Поэтому эти результаты нельзя напрямую сравнивать с прежними цифрами ConvNeXt.
-Все пять прогонов ResNet-18 имеют одинаковый fingerprint; он совпадает с сохранённой копией данных.
-Клипы: 3 секунды, mono, 16 кГц, .npy int16. Аудио в эту ветку не загружается.
-В train-метриках может быть n=512: текущий train loader использует drop_last для неполного последнего batch.
+1. Created a separate branch from main. Existing ConvNeXt experiment files remain separate.
+2. Validated the dataset and saved a local snapshot and its fingerprint in `dataset_snapshot.json`.
+3. Compared three learning rates with all other settings fixed.
+4. Selected a configuration using validation metrics and repeated it with seeds 43 and 44.
+5. Saved `best.pt`, exported `model.onnx`, and verified ONNX predictions against PyTorch.
+6. Saved configs, metrics, epoch histories, dataset and environment metadata, and plots for all five main runs under `results/`.
 
-## Настройки
-- pretrained=true: дообучение весов ImageNet, не обучение с нуля. Допустимость этого режима для сдачи сверить с заданием курса.
-- optimizer=adamw; batch_size=16; dropout=0.2; weight_decay=0.05.
-- Максимум 12 эпох, early_stopping_patience=4.
-- Три learning rate: 0.00005, 0.0002, 0.0005; seed=42.
-- Эти настройки совпадают с предыдущей серией ConvNeXt, кроме архитектуры.
-- Для выбранного learning rate выполнены дополнительные seed=43 и seed=44.
+## Dataset and comparison limits
 
-## Результаты подбора
-- lr=5e-05: validation EER 3.21%, loss 0.1413, лучшая эпоха 2, всего эпох 6.
-- lr=0.0002: validation EER 0.00%, loss 0.0560, лучшая эпоха 2, всего эпох 6.
-- lr=0.0005: validation EER 3.21%, loss 0.3760, лучшая эпоха 1, всего эпох 5.
+The source is `data/training_dataset_v2`: 513 training clips (228 allowed, 285 not allowed), 63 validation clips, and 63 test clips (28 allowed and 35 not allowed in each).
 
-Выбрано lr=0.0002, seed=42: сначала минимальный validation EER, затем validation loss.
-Повторы с другими seed проверяют устойчивость; по test и по лучшему случайному seed модель не выбиралась.
-Средний validation EER по seed 42/43/44: 1.07%, выборочное стандартное отклонение 1.86 процентного пункта.
+The shared dataset changed after the earlier ConvNeXt experiments, which used 456/56/56 clips. Those results are not directly comparable. All five ResNet-18 runs have the same dataset fingerprint, matching the saved snapshot.
 
-## Итоговый test для выбранной модели
-Порог выбран только на validation: 0.730870.
-- Accuracy: 85.71% (54 из 63 верно).
-- FAR: 17.14% (пропущены 6 из 35 чужих).
-- FRR: 10.71% (отклонены 3 из 28 своих).
-- Test EER: 17.50%. EER рассчитывается при своём пороге; рабочий порог на test не подстраивался.
-Validation заметно лучше test. Это ограничивает доверие к результату; нужны дополнительные независимые записи. Разные микрофоны и источники могут давать модели подсказки вместо голоса.
+Clips are 3-second mono waveforms at 16 kHz, stored as int16 NumPy arrays. Audio is not included in Git. Training metrics may report `n=512` because the current training loader drops the incomplete final batch.
 
-## Что означают настройки и критерии
-Learning rate — размер шага обновления весов. В этой серии подбирали только его.
-Dropout и weight decay могут уменьшать переобучение; здесь они зафиксированы.
-Batch size — число клипов в одной порции. Эпоха — проход по train. Прогон — обучение заново с одной конфигурацией.
-Веса подбирает оптимизатор; мы сравниваем гиперпараметры по validation.
-EER, FAR, FRR и loss: меньше лучше. Accuracy и F1: больше лучше.
-Во время эпох FAR/FRR печатаются при пороге 0.5; итоговые метрики считаются при пороге из validation. Смотри results/*/metrics.json.
-Общая таблица iml-compare сортируется по F1, а не EER.
+## Training configuration
 
-## Как повторить
-Из корня репозитория:
+- `pretrained=true`: fine-tuning ImageNet weights, rather than training from scratch. Check that this mode meets the course submission requirements.
+- Optimizer: AdamW; batch size: 16; dropout: 0.2; weight decay: 0.05.
+- Maximum 12 epochs; early stopping after four epochs without validation EER improvement.
+- Learning-rate trials: 0.00005, 0.0002, and 0.0005, using seed 42.
+- These settings match the earlier ConvNeXt series apart from the architecture.
+- The selected learning rate was also evaluated with seeds 43 and 44.
+
+## Learning-rate search
+
+- `lr=0.00005`: validation EER 3.21%, loss 0.1413; best epoch 2; 6 epochs completed.
+- `lr=0.0002`: validation EER 0.00%, loss 0.0560; best epoch 2; 6 epochs completed.
+- `lr=0.0005`: validation EER 3.21%, loss 0.3760; best epoch 1; 5 epochs completed.
+
+Selected `lr=0.0002`, seed 42, using the lowest validation EER, with validation loss as the tie-breaker. Additional seeds assess variability; neither test scores nor the best random seed were used for model selection.
+
+Across seeds 42, 43, and 44, mean validation EER was 1.07%, with a sample standard deviation of 1.86 percentage points.
+
+## Selected model: test results
+
+The decision threshold was chosen only on validation: **0.730870**.
+
+- Accuracy: **85.71%** (54/63 correct).
+- FAR: **17.14%** (6/35 stranger clips accepted).
+- FRR: **10.71%** (3/28 allowed clips rejected).
+- Test EER: **17.50%**. EER uses its own threshold; the deployed decision threshold was not adjusted on test.
+
+Validation results are substantially better than test results. The small dataset and validation/test gap limit confidence. More independent recordings are needed; recording channels and source differences may provide shortcuts unrelated to speaker identity.
+
+## Interpreting settings and metrics
+
+Learning rate controls the weight-update step size; it is the only hyperparameter varied in the initial search. Dropout and weight decay can reduce overfitting but were fixed in this series.
+
+Batch size is the number of clips per batch. An epoch is a pass through the training data; a run trains a fresh model with one configuration. The optimizer updates weights, while hyperparameters are selected using validation data.
+
+Lower EER, FAR, FRR, and loss are better; higher accuracy and F1 are better. During training, FAR/FRR are logged at threshold 0.5. Final metrics use the threshold selected on validation; see `results/*/metrics.json`. The comparison table sorts by F1 rather than EER.
+
+## Reproduce
+
+From the repository root:
 
 ```bash
 uv sync --group dev
 uv run python notebooks/petr/resnet18/run.py
 ```
 
-На этом workspace сценарий автоматически использует сохранённую копию данных. На другой машине укажи папку с тем же fingerprint:
+On the original workspace, the runner automatically uses the saved local dataset snapshot. On another machine, supply a dataset with the recorded fingerprint:
 
 ```bash
 uv run python notebooks/petr/resnet18/run.py --data /path/to/dataset
 ```
 
-Сценарий проверяет fingerprint, повторно использует готовые прогоны и экспортирует выбранную модель. Другой датасет требует отдельного эксперимента с новым topic: не затирай текущие результаты.
-Логи: runs/petr/resnet18_experiments.log и runs/petr/resnet18_reproduce.log.
+The runner checks the fingerprint, reuses completed configurations, and exports the selected model. A different dataset requires a separate experiment topic rather than overwriting these results.
 
-## Где модель
-Путь к выбранному прогону записан в selected_run.txt. В его папке находятся best.pt и model.onnx.
-Веса и аудио исключены правилами репозитория из Git; в ветке публикуются код, конфиги, метрики и графики. Для передачи весов используй отдельный согласованный способ.
+Logs: `runs/petr/resnet18_experiments.log` and `runs/petr/resnet18_reproduce.log`.
 
-## Следующий эксперимент
-Зафиксировать lr=0.0002 и сравнить dropout 0.0/0.2/0.4 на той же validation. Настройки выбирать по validation, test использовать для финальной оценки. Для честного сравнения архитектур обе модели нужно обучать на одной версии датасета.
+## Model artifacts
+
+`selected_run.txt` records the selected run directory, containing `best.pt` and `model.onnx`. Weights and audio are excluded from Git by repository rules. This branch publishes code, configs, metrics, and plots. Model weights remain in the Coder workspace.
+
+## Suggested next experiment
+
+Fix `lr=0.0002` and compare dropout values 0.0, 0.2, and 0.4 using the same validation split. Select settings on validation and use test for the final report. A fair architecture comparison requires both models to use the same dataset version.
