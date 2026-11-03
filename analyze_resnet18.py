@@ -24,10 +24,12 @@ DATA_SHA1 = "10ac1fb033e3b1845bc52ea2e2229c2982ad11f0"
 BASE = ExperimentConfig(
     model="resnet18",
     member="petr",
-    topic="resnet18_review_grid",
+    topic="resnet18_val_loss",
     pretrained=True,
     init="he",  # Initializes the new classifier; pretrained backbone weights are retained.
     epochs=20,
+    checkpoint_metric="loss",
+    early_stopping_patience=0,
     export_onnx=False,
 )
 GRID = {"lr": [1e-3, 3e-4], "dropout": [0.0, 0.2]}
@@ -130,7 +132,7 @@ def plot_grid(records, out):
         h = r.history
         label = (
             f"{name}: LR={r.cfg.lr:g}, dropout={r.cfg.dropout:g}; "
-            f"best EER {100 * r.metrics['val']['eer']:.2f}% (epoch {r.metrics['best_epoch']})"
+            f"min val loss={r.metrics['val']['loss']:.4g} (epoch {r.metrics['best_epoch']})"
         )
         for ax, column, scale in zip(
             axes, ("train_loss", "val_loss", "val_eer"), (1, 1, 100), strict=True
@@ -169,7 +171,7 @@ def plot_grid(records, out):
             top = max(float(r.history.val_eer.max() * 100) for _, r in records)
             ax.set_ylim(-2, max(5, top * 1.08))
     fig.suptitle(
-        "ResNet-18: ImageNet fine-tuning | learning rate x dropout | 20 epochs", fontsize=15
+        "ResNet-18: ImageNet fine-tuning | checkpoints: min val loss | 20 epochs", fontsize=15
     )
     fig.legend(
         handles,
@@ -183,7 +185,7 @@ def plot_grid(records, out):
     fig.text(
         0.5,
         0.02,
-        "Rings: retained checkpoints. Overlapping traces have equal EER.\n"
+        "Rings: minimum-validation-loss checkpoints. Overlapping traces have equal EER.\n"
         "Loss: shared symlog scale, linear below 0.01; large early spikes remain visible.",
         ha="center",
         fontsize=10,
@@ -245,7 +247,7 @@ def main():
     parser.add_argument(
         "--train", action="store_true", help="Train missing runs; keep completed runs"
     )
-    parser.add_argument("--out", type=Path, default=Path("runs/petr/resnet18_review/report"))
+    parser.add_argument("--out", type=Path, default=Path("runs/petr/resnet18_val_loss/report"))
     args = parser.parse_args()
     fp = data_fingerprint(args.data)
     if fp["sha1"] != DATA_SHA1:
@@ -259,12 +261,15 @@ def main():
         expected = list(range(1, int(r.metrics["epochs_run"]) + 1))
         if r.history.epoch.tolist() != expected or len(expected) != 20:
             raise ValueError(f"Incomplete history: {name}")
+        expected_best = int(r.history.loc[r.history.val_loss.idxmin(), "epoch"])
+        if r.metrics["select_metric"] != "loss" or r.metrics["best_epoch"] != expected_best:
+            raise ValueError(f"Checkpoint is not the minimum-validation-loss epoch: {name}")
+        if not np.isclose(r.metrics["val"]["loss"], r.history.val_loss.min(), atol=1e-7):
+            raise ValueError(f"Checkpoint loss does not match history: {name}")
         errors = audit_predictions(r, frames)
         records.append((name, r, errors))
     grid = [(name, r) for name, r, _ in records]
-    selected_name, selected = min(
-        grid, key=lambda x: (x[1].metrics["val"]["eer"], x[1].metrics["val"]["loss"], x[0])
-    )
+    selected_name, selected = min(grid, key=lambda x: (x[1].metrics["val"]["loss"], x[0]))
     if data_fingerprint(args.data)["sha1"] != fp["sha1"]:
         raise ValueError("Dataset changed during training; report generation refused")
     args.out.mkdir(parents=True, exist_ok=True)

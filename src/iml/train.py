@@ -1,7 +1,8 @@
 """The one training loop everybody uses: ``fit(cfg, loaders) -> RunRecord``.
 
 Features: optimizer/scheduler from config, AMP on the GPU (HIP/ROCm or CUDA), gradient
-clipping, early stopping and checkpoint selection on validation EER, best/last checkpoints,
+clipping, early stopping and checkpoint selection on the configured validation metric,
+best/last checkpoints,
 per-epoch history, a decision threshold chosen on the validation set (FAR == FRR point) and
 FAR/FRR/EER on every split at that threshold, optional Monte-Carlo dropout, optional MLflow,
 and a verified ``model.onnx`` next to ``best.pt`` (``cfg.export_onnx``).
@@ -223,9 +224,17 @@ def _public(metrics: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in metrics.items() if not k.startswith("_")}
 
 
-def _selection_score(ev: dict[str, Any]) -> float:
-    """Higher is better: negative EER (threshold-free, the spec's criterion); macro-F1 if EER
-    is undefined (single-class validation set)."""
+def _selection_score(ev: dict[str, Any], metric: str = "eer") -> float:
+    """Higher is better: negate the configured quantity to minimize it.
+
+    EER remains the backward-compatible default, with macro-F1 as its single-class fallback.
+    Loss selection uses the same criterion for checkpoint retention and early stopping.
+    """
+    if metric == "loss":
+        loss = float(ev["loss"])
+        if not math.isfinite(loss):
+            raise ValueError("Non-finite validation loss; checkpoint selection refused")
+        return -loss
     e = ev.get("eer", float("nan"))
     return -e if math.isfinite(e) else ev["macro_f1"]
 
@@ -348,7 +357,7 @@ def fit(
             frr=f"{ev['frr']:.2f}",
         )
 
-        score = _selection_score(ev)
+        score = _selection_score(ev, cfg.checkpoint_metric)
         if score > best_score:
             best_score, best_epoch, bad_epochs = score, epoch, 0
             save_checkpoint(out / "best.pt", model, cfg, epoch, ev)
@@ -376,7 +385,13 @@ def fit(
         "epochs_run": epoch,
         "params": count_params(model),
         "select_split": select_split,
-        "select_metric": "eer" if math.isfinite(sel.get("eer", float("nan"))) else "macro_f1",
+        "select_metric": (
+            "loss"
+            if cfg.checkpoint_metric == "loss"
+            else "eer"
+            if math.isfinite(sel.get("eer", float("nan")))
+            else "macro_f1"
+        ),
         "decision_threshold": threshold,
     }
     for split, loader in loaders.items():

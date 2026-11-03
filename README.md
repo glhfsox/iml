@@ -81,9 +81,15 @@ and `model.onnx` (exported from `best.pt` at the end of `fit` and verified again
 onnxruntime; `export_onnx=false` skips it, `make export RUN=...` redoes it by hand).
 Set `mc_dropout_samples` > 0 (with `dropout` > 0) to evaluate with Monte-Carlo dropout.
 
-Evaluation protocol: the checkpoint with the lowest validation EER is kept; the decision
+Evaluation protocol: by default, the checkpoint with the lowest validation EER is kept; the decision
 threshold is the FAR == FRR point on the validation set (`decision_threshold` in
 `metrics.json` and in `best.pt`) and is applied unchanged to train/val/test and by `app/`.
+Set `checkpoint_metric=loss` (CLI: `--set checkpoint_metric=loss`) to minimize validation
+loss for checkpoint selection and early stopping instead. `early_stopping_patience=0`
+disables early stopping, so all configured epochs run. The decision threshold is still
+calibrated on validation scores after loading the retained checkpoint. The default EER
+mode and historical EER run names remain unchanged.
+
 `class_weight=balanced` reweights the cross-entropy by inverse class frequency. A finished
 run folder is loaded instead of retrained (`--overwrite` / `fit(..., overwrite=True)` to redo).
 With `pretrained=true` (the default) the ImageNet weights are loaded and `init` is ignored, so

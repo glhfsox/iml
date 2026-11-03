@@ -86,6 +86,7 @@ class ExperimentConfig:
     num_workers: int = 2
 
     # --- evaluation ---
+    checkpoint_metric: str = "eer"  # eer | loss; minimize on validation for checkpoint/early stop
     mc_dropout_samples: int = 0  # >0: Monte-Carlo dropout with that many stochastic passes
     export_onnx: bool = True  # write + verify <run>/model.onnx at the end of fit (iml.export)
 
@@ -99,6 +100,8 @@ class ExperimentConfig:
             raise ValueError('model="custom" needs a non-empty arch (list of layer dicts)')
         if self.model != "custom" and self.arch:
             raise ValueError(f"arch is only used by model='custom'; {self.model} needs arch=[]")
+        if self.checkpoint_metric not in {"eer", "loss"}:
+            raise ValueError("checkpoint_metric must be eer or loss")
         if self.epochs < 1:
             raise ValueError("epochs must be >= 1")
         if self.mc_dropout_samples > 0 and self.dropout <= 0:
@@ -168,6 +171,9 @@ class ExperimentConfig:
 
     def config_hash(self, n: int = 6) -> str:
         payload = {k: v for k, v in self.to_dict().items() if k not in _BOOKKEEPING}
+        # Preserve names of historical EER-selected runs; loss selection is a new experiment.
+        if self.checkpoint_metric == "eer":
+            payload.pop("checkpoint_metric")
         return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:n]
 
     def run_name(self, max_slug: int = 60) -> str:
