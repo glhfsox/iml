@@ -1,53 +1,89 @@
-# ResNet-18 — Fine-tuning experiment report
+# ResNet-18 — Per-epoch experiment report
 
-## Objective and setup
+## Protocol
 
-Evaluate ResNet-18 as a baseline for the project's allowed / not-allowed voice classifier.
-ImageNet-pretrained weights are fine-tuned on 3-second log-mel spectrograms
-(16 kHz, 80 mel bins, FFT 512, hop 160, per-sample normalization).
+This report replaces the earlier five-run summary with **eight freshly trained variants
+G1–G8**, following the grid in `notebooks/_template/architecture/experiments.ipynb`.
+A separate fresh run **R0** rechecks the original configuration; R0 is not in the figures.
 
-- Dataset: `data/training_dataset_v2`, with 513 training, 63 validation and 63 test clips.
+- Data: `training_dataset_v2`, **513 train / 63 validation / 63 test** clips.
   Validation and test each contain 28 allowed and 35 not-allowed clips.
-- Optimizer: AdamW; batch size 16; dropout 0.2; weight decay 0.05; no scheduler.
-- Budget: up to 12 epochs, stopping after 4 epochs without improved validation EER.
-- Hardware: AMD Radeon 8060S through PyTorch's ROCm backend.
+- Grid: LR **0.001 / 0.0003** × dropout **0 / 0.2** × **ImageNet / from scratch**.
+- Template defaults: Adam, batch 32, weight decay 0, seed 42, no scheduler.
+  Every grid run completes **20 epochs without early stopping**; the full network is trained.
+- Input: 3-second clips, 16 kHz, 80 log-mel bins, FFT 512, hop 160, per-sample normalization.
+  Hardware: AMD Radeon 8060S / ROCm. Augmentation is not active in the shared loader.
+- The shared `fit()` retains the first checkpoint attaining the lowest validation EER.
+  Across variants, selection uses validation EER, then checkpoint validation loss, then run ID.
+  Test metrics never participate in selection. The test set has already been inspected;
+  the following test results are exploratory, not an untouched final benchmark.
 
-## Experiments and results
+## Read the figures
 
-Three seed-42 runs compare learning rates 0.00005, 0.0002 and 0.0005.
-Their best-checkpoint validation EERs are **3.21%, 0% and 3.21%**, respectively.
-Selection uses validation EER, then validation loss; test metrics do not select the configuration.
+Each panel fixes initialization and dropout; each line is an identified run with a different LR.
+Both figures show **all 20 epochs of G1–G8**, rather than a single selected run or a bar of minima.
 
-The selected learning rate is **0.0002**, seed 42, checkpoint at epoch 2.
-Two further runs at that learning rate, seeds 43 and 44, give validation EERs of
-**0% and 3.21%**. The five runs stop after 5–6 epochs. A separate earlier
-1-epoch smoke test checked the pipeline and is excluded from this comparison.
+![Validation EER at every epoch for all eight grid runs](plots/validation_eer.png)
 
-At the selected checkpoint, the validation-derived decision threshold is **0.73087**.
-Applied unchanged to test, it gives:
+Markers show individual epochs; stars identify retained checkpoints. The EER axis is in percent
+and has the same scale in every panel. Overlapping lines mean equal EER, not equal predictions.
+The exact run mapping and best checkpoints are:
 
-- Accuracy: **85.71%** (54/63 correct).
-- FAR: **17.14%** (6/35 not-allowed clips accepted).
-- FRR: **10.71%** (3/28 allowed clips rejected).
+- ImageNet, dropout 0: **G1** LR 0.001, epoch 3, EER 0%; **G5** LR 0.0003, epoch 3, EER 0%.
+- ImageNet, dropout 0.2: **G3** LR 0.001, epoch 2, EER 0%; **G7** LR 0.0003, epoch 5, EER 0%.
+- From scratch, dropout 0: **G2** LR 0.001, epoch 14, EER 3.21%; **G6** LR 0.0003, epoch 8, EER 3.21%.
+- From scratch, dropout 0.2: **G4** LR 0.001, epoch 15, EER 3.21%; **G8** LR 0.0003, epoch 19, EER 3.21%.
 
-![Training and validation loss for the selected run](plots/loss.png)
+![Training and validation loss for the same eight runs](plots/loss.png)
 
-![Validation EER across learning rates and seed repeats](plots/validation_eer.png)
+Blue means LR 0.001; orange means LR 0.0003. Dashed lines are online training loss;
+solid lines are end-of-epoch validation loss. Loss panels use independent linear y scales.
+Training loss is measured while weights change, in training mode; validation uses evaluation
+mode. These are not two evaluations of an identical frozen model. Large early validation-loss
+spikes remain visible. From-scratch runs approach zero training loss while validation loss
+stays higher and fluctuates, consistent with overfitting. This is a one-seed comparison;
+it does not establish a reliable dropout or architecture advantage.
 
-## Interpretation
+## Selected checkpoint: G7
 
-ResNet-18 is a workable baseline, but perfect validation EER does not imply reliable
-performance: the holdouts are small, and test errors remain material. Variation across
-seeds and the loss curves warrant further checks for overfitting and recording-level
-separation. These runs do not establish deployment readiness.
+G7 wins the validation-only rule: ImageNet, LR **0.0003**, dropout **0.2**, checkpoint **epoch 5**.
+Its validation loss is **0.02818**. The validation-derived threshold **0.114268** is kept fixed
+for the following FAR/FRR and accuracy values:
 
-The earlier ConvNeXt report used a different dataset (456/56/56 clips) and trained
-from scratch. Its numbers are not a controlled architecture comparison with these runs.
-A fair follow-up should use the same data and a matched training protocol.
+- **Train:** accuracy 99.80%, FAR 0.35% (1/284), FRR 0% (0/228).
+  Evaluation contains 512 examples because the shared training loader drops its last partial batch.
+- **Validation:** accuracy 100%, FAR 0% (0/35), FRR 0% (0/28), EER 0%.
+- **Test:** accuracy **84.13%**, FAR **17.14% (6/35)**, FRR **14.29% (4/28)**.
+  All six false accepts are T clips; all four false rejects are M clips.
 
-## Reproduce
+EER 0% means the scores can perfectly separate this validation set at a suitable threshold.
+It does **not** imply zero train/test errors. EER sweeps thresholds; the FAR/FRR above use one
+fixed validation threshold. The shared EER is the nearest empirical ROC-point estimate,
+not an interpolated estimate; exact ties between candidate points can be affected by rounding.
 
-From the repository root, with the shared dataset mounted:
+## Investigation of the earlier result
+
+The earlier 0% was independently reproduced from its saved predictions and checkpoint.
+Fresh recheck R0 also reaches validation EER 0%, at epoch 4 after 8 epochs of training,
+with test FAR 20% and FRR 3.57%. R0 uses the original AdamW, LR 0.0002, batch 16,
+dropout 0.2, weight decay 0.05 and patience 4. GPU training is not deterministic by default;
+R0 does not exactly reproduce the earlier checkpoint or test numbers.
+
+The data/prediction audit found no cross-split recording-ID overlap, exact duplicate PCM
+across splits, or inconsistent saved metric counts. T is labeled **not allowed (0)** throughout.
+However, T's 7 validation clips come from **one source recording**; its 7 test clips come from
+two, and its 57 training clips come from ten. Exact hashes do not rule out near-duplicates
+or shared sessions. The documented phone/codec/source differences remain a channel-confound
+risk. The validation/test gap is real; its cause is not established by these checks.
+
+Michal's published ConvNeXt report used **456/56/56 clips and training from scratch**.
+This report uses 513/63/63 clips and explicitly compares both initializations; the published
+numbers are not a controlled architecture comparison. Before more tuning, improve recording-
+and session-level coverage and reserve a fresh holdout. More epochs alone did not fix the gap.
+
+## Reproduce and storage
+
+From the repository root:
 
 ```bash
 uv sync --group dev
@@ -55,13 +91,12 @@ uv run iml-data validate data/training_dataset_v2
 uv run python analyze_resnet18.py --train
 ```
 
-The script trains missing runs using the shared training loop, reuses matching finished
-runs, selects the LR on validation only, and generates the two figures under
-`runs/petr/resnet18_lr/report/`. Omit `--train` to regenerate figures from existing runs.
-To publish updated figures, copy only those two PNGs into `reports/resnet18/plots/`.
+The first call trains missing R0 and G1–G8 runs; later calls reuse only matching finished runs.
+Omit `--train` to regenerate both figures and re-audit saved predictions. The script independently
+checks confusion counts and empirical ROC candidates on train/validation/test and refuses data
+changes. Dataset SHA1: `10ac1fb033e3b1845bc52ea2e2229c2982ad11f0`.
 
-All five recorded runs use dataset SHA1 `10ac1fb033e3b1845bc52ea2e2229c2982ad11f0`.
-The script refuses different data; use `--data /path/to/original/snapshot` if the shared
-dataset has changed. Training was performed at code commit `50cf7a5`; exact floating-point
-results may vary across environments. Run configs, histories, checkpoints, predictions
-and environment details remain in `runs/petr/resnet18_lr/` on Coder, outside Git.
+Histories, configs, audit receipts, predictions and weights stay under `runs/petr/resnet18_review*/`
+on Coder, outside Git. Only this README, two selected figures and the script are published.
+MLflow logging follows the template's quality-metrics-only rule; the server was unreachable
+for this execution, so these runs were **not tracked in MLflow**. No tracking success is claimed.
