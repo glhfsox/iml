@@ -1,9 +1,8 @@
-"""Run the template ResNet-18 grid, audit predictions, and plot every epoch of every run."""
+"""Compare ImageNet fine-tuning runs, audit predictions, and reproduce report figures."""
 
 import argparse
 import hashlib
 import json
-import math
 from collections import Counter
 from pathlib import Path
 
@@ -21,34 +20,23 @@ from iml.tracking import Tracker, notebook_run
 from iml.train import fit
 
 DATA_SHA1 = "10ac1fb033e3b1845bc52ea2e2229c2982ad11f0"
-# Same defaults and grid as notebooks/_template/architecture/experiments.ipynb.
+# Shared template pipeline; this team experiment fine-tunes ImageNet weights only.
 BASE = ExperimentConfig(
     model="resnet18",
     member="petr",
     topic="resnet18_review_grid",
+    pretrained=True,
+    init="he",  # Initializes the new classifier; pretrained backbone weights are retained.
     epochs=20,
     export_onnx=False,
 )
-GRID = {"lr": [1e-3, 3e-4], "dropout": [0.0, 0.2], "pretrained": [True, False]}
-RECHECK = ExperimentConfig(
-    model="resnet18",
-    member="petr",
-    topic="resnet18_review_recheck",
-    pretrained=True,
-    optimizer="adamw",
-    batch_size=16,
-    dropout=0.2,
-    weight_decay=0.05,
-    lr=2e-4,
-    epochs=12,
-    early_stopping_patience=4,
-    seed=42,
-    export_onnx=False,
-)
+GRID = {"lr": [1e-3, 3e-4], "dropout": [0.0, 0.2]}
 QUALITY = ("accuracy", "far", "frr", "eer", "macro_f1")
 
 
 def obtain(cfg, fp, data, train):
+    if not cfg.pretrained:
+        raise ValueError("This experiment supports ImageNet fine-tuning only")
     out = run_dir(cfg)
     check_run_data(out, fp, overwrite=False)
     if not (out / "metrics.json").exists():
@@ -132,70 +120,123 @@ def audit_predictions(record, frames):
 
 
 def plot_grid(records, out):
+    """Artem's three-panel layout: consistent run colors, bottom legend, checkpoint rings."""
     plt.rcParams.update({"font.size": 11})
-    colors = {1e-3: "#176ca4", 3e-4: "#bb5e16"}
-    groups = [(True, 0.0), (True, 0.2), (False, 0.0), (False, 0.2)]
-    for kind, filename in (("eer", "validation_eer.png"), ("loss", "loss.png")):
-        fig, axes = plt.subplots(2, 2, figsize=(11, 8.5), sharex=True, squeeze=False)
-        for ax, (pretrained, dropout) in zip(axes.flat, groups, strict=True):
-            for name, r in records:
-                if (r.cfg.pretrained, r.cfg.dropout) != (pretrained, dropout):
-                    continue
-                h, color = r.history, colors[r.cfg.lr]
-                label = f"{name}: LR={r.cfg.lr:g}"
-                if kind == "eer":
-                    ax.plot(
-                        h.epoch,
-                        h.val_eer * 100,
-                        "o-",
-                        color=color,
-                        markersize=3,
-                        label=f"{label}; best epoch {r.metrics['best_epoch']}",
-                    )
-                    best = h.loc[h.epoch == r.metrics["best_epoch"]].iloc[0]
-                    ax.scatter(
-                        best.epoch,
-                        best.val_eer * 100,
-                        marker="*",
-                        s=140,
-                        color=color,
-                        edgecolor="black",
-                        linewidth=0.5,
-                        zorder=4,
-                    )
-                else:
-                    ax.plot(h.epoch, h.train_loss, "--", color=color, label=f"{name} train")
-                    ax.plot(h.epoch, h.val_loss, "-", color=color, label=f"{name} validation")
-            ax.set_title(
-                f"{'ImageNet fine-tuning' if pretrained else 'From scratch'} | dropout={dropout:g}"
+    colors = ["#0072b2", "#e69f00", "#009e73", "#d55e00"]
+    markers = ["o", "s", "^", "D"]
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    handles, labels = [], []
+    for index, ((name, r), color, marker) in enumerate(zip(records, colors, markers, strict=True)):
+        h = r.history
+        label = (
+            f"{name}: LR={r.cfg.lr:g}, dropout={r.cfg.dropout:g}; "
+            f"best EER {100 * r.metrics['val']['eer']:.2f}% (epoch {r.metrics['best_epoch']})"
+        )
+        for ax, column, scale in zip(
+            axes, ("train_loss", "val_loss", "val_eer"), (1, 1, 100), strict=True
+        ):
+            (line,) = ax.plot(
+                h.epoch, h[column] * scale, color=color, marker=marker, markersize=4, linewidth=1.8
             )
-            ax.set_xlabel("Epoch (one pass over training batches)")
-            ax.set_ylabel("Validation EER (%)" if kind == "eer" else "Cross-entropy loss")
-            ax.set_xticks([1, 5, 10, 15, 20])
-            ax.set_xlim(0.5, 20.5)
-            ax.tick_params(labelbottom=True)
-            ax.grid(alpha=0.25)
-            if kind == "eer":
-                top = max(float(r.history.val_eer.max() * 100) for _, r in records)
-                ax.set_ylim(-1, max(10, math.ceil(top / 10) * 10) + 2)
-            else:
-                ax.set_ylim(bottom=0)
-            ax.legend(fontsize=11, loc="upper right")
-        metric_title = (
-            "Validation EER at every epoch" if kind == "eer" else "Training and validation loss"
-        )
-        fig.suptitle(f"ResNet-18 | {metric_title}", fontsize=15, y=0.99)
-        caption = (
-            "G1–G8: eight fresh seed-42 runs, 20 epochs each; no early stopping.\n"
-            "Stars mark retained checkpoints."
-            if kind == "eer"
-            else "Blue: LR=0.001; orange: LR=0.0003. Dashed: online training loss (training mode). "
-            "\nSolid: end-of-epoch validation loss (evaluation mode); independent linear y scales."
-        )
-        fig.text(0.5, 0.015, caption, ha="center", fontsize=11)
-        fig.tight_layout(rect=(0, 0.065, 1, 0.965))
-        fig.savefig(out / filename, dpi=150)
-        plt.close(fig)
+            if column == "val_eer":
+                handles.append(line)
+                labels.append(label)
+                best = h.loc[h.epoch == r.metrics["best_epoch"]].iloc[0]
+                ax.scatter(
+                    best.epoch,
+                    best.val_eer * 100,
+                    s=140 + 50 * index,
+                    facecolors="none",
+                    edgecolors=color,
+                    linewidths=1.6,
+                    zorder=5,
+                )
+    loss_max = max(
+        float(r.history[c].max()) for _, r in records for c in ("train_loss", "val_loss")
+    )
+    for i, ax in enumerate(axes):
+        ax.set_title(("Training cross-entropy", "Validation cross-entropy", "Validation EER")[i])
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("EER (%)" if i == 2 else "Cross-entropy loss (symlog)")
+        ax.set_xticks([1, 5, 10, 15, 20])
+        ax.set_xlim(0.5, 20.5)
+        ax.grid(alpha=0.3)
+        if i < 2:
+            ax.set_yscale("symlog", linthresh=0.01)
+            ax.set_ylim(0, loss_max * 1.6)
+            ax.set_yticks([0, 0.01, 0.1, 1, 10], ["0", "0.01", "0.1", "1", "10"])
+        else:
+            top = max(float(r.history.val_eer.max() * 100) for _, r in records)
+            ax.set_ylim(-2, max(5, top * 1.08))
+    fig.suptitle(
+        "ResNet-18: ImageNet fine-tuning | learning rate x dropout | 20 epochs", fontsize=15
+    )
+    fig.legend(
+        handles,
+        labels,
+        loc="lower center",
+        ncol=2,
+        frameon=False,
+        fontsize=10,
+        bbox_to_anchor=(0.5, 0.07),
+    )
+    fig.text(
+        0.5,
+        0.02,
+        "Rings: retained checkpoints. Overlapping traces have equal EER.\n"
+        "Loss: shared symlog scale, linear below 0.01; large early spikes remain visible.",
+        ha="center",
+        fontsize=10,
+    )
+    fig.tight_layout(rect=(0, 0.2, 1, 0.93))
+    fig.savefig(out / "learning_curves.png", dpi=160)
+    plt.close(fig)
+
+
+def plot_scores(record, name, frames, out):
+    """Show actual clip scores; y positions are labeled groups, not embedding coordinates."""
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.8), sharex=True, sharey=True)
+    threshold = record.metrics["decision_threshold"]
+    for ax, split in zip(axes, ("val", "test"), strict=True):
+        p = np.load(record.path / f"predictions_{split}.npz")
+        labels, scores = p["labels"], p["scores"]
+        paths = frames[split].path
+        masks = [
+            labels == 1,
+            np.array([Path(x).name.startswith("T_") for x in paths]),
+            np.array([Path(x).name.startswith("N") for x in paths]),
+        ]
+        for row, mask, color in zip(
+            range(3), masks, ("#0072b2", "#d55e00", "#666666"), strict=True
+        ):
+            values = scores[mask]
+            y = row + np.linspace(-0.15, 0.15, len(values))
+            wrong = (values >= threshold).astype(int) != labels[mask]
+            ax.scatter(values[~wrong], y[~wrong], s=30, color=color, marker="o")
+            ax.scatter(values[wrong], y[wrong], s=65, color=color, marker="x", linewidths=1.6)
+        ax.axvline(threshold, color="black", linestyle="--", linewidth=1.2)
+        ax.set_title("Validation: 63 clips" if split == "val" else "Test: 63 clips")
+        ax.set_xlabel("Allowed-class score (0–1)")
+        ax.set_xticks([0, 0.25, 0.5, 0.75, 1])
+        ax.set_xlim(-0.025, 1.025)
+        ax.set_yticks([0, 1, 2], ["Allowed (28)", "Not allowed: T (7)", "Not allowed: N (28)"])
+        ax.tick_params(labelleft=True)
+        ax.grid(axis="x", alpha=0.25)
+    fig.suptitle(
+        f"{name}, checkpoint epoch {record.metrics['best_epoch']}: validation vs test scores",
+        fontsize=14,
+    )
+    fig.text(
+        0.5,
+        0.02,
+        f"Dashed line: fixed validation threshold {threshold:.6f}. Circles: correct; x: errors. "
+        "\nAccept when score >= threshold; vertical offsets separate clips.",
+        ha="center",
+        fontsize=10,
+    )
+    fig.tight_layout(rect=(0, 0.07, 1, 0.92))
+    fig.savefig(out / "score_distributions.png", dpi=150)
+    plt.close(fig)
 
 
 def main():
@@ -212,15 +253,15 @@ def main():
     frames, data_audit = audit_data(args.data)
     configs = expand_grid(BASE, GRID)
     records = []
-    for name, cfg in [("R0", RECHECK)] + [(f"G{i}", c) for i, c in enumerate(configs, 1)]:
+    for name, cfg in [(f"FT{i}", c) for i, c in enumerate(configs, 1)]:
         print(f"START {name}: {cfg.to_dict()}", flush=True)
         r = obtain(cfg, fp, args.data, args.train)
         expected = list(range(1, int(r.metrics["epochs_run"]) + 1))
-        if r.history.epoch.tolist() != expected or (name != "R0" and len(expected) != 20):
+        if r.history.epoch.tolist() != expected or len(expected) != 20:
             raise ValueError(f"Incomplete history: {name}")
         errors = audit_predictions(r, frames)
         records.append((name, r, errors))
-    grid = [(name, r) for name, r, _ in records if name != "R0"]
+    grid = [(name, r) for name, r, _ in records]
     selected_name, selected = min(
         grid, key=lambda x: (x[1].metrics["val"]["eer"], x[1].metrics["val"]["loss"], x[0])
     )
@@ -228,6 +269,7 @@ def main():
         raise ValueError("Dataset changed during training; report generation refused")
     args.out.mkdir(parents=True, exist_ok=True)
     plot_grid(grid, args.out)
+    plot_scores(selected, selected_name, frames, args.out)
     summary = {"dataset": fp, "data_audit": data_audit, "selected": selected_name, "runs": []}
     for name, r, errors in records:
         variant = f"{name}: lr={r.cfg.lr:g},dropout={r.cfg.dropout:g},pretrained={r.cfg.pretrained}"
