@@ -90,20 +90,26 @@ These results use one seed and a small test set. Test results were inspected bet
 
 ## Reproduce
 
-From the repository root, using the existing run artifacts:
+Run all seven experiments from the repository root:
 
 ```bash
-uv run python prepare_report.py --runs runs/petr/optimizers --out reports/resnet18
+bash train_resnet18.sh
 ```
 
-Print the seven training commands without executing them:
+Inspect the commands without starting training:
 
 ```bash
-uv run python prepare_report.py --print-training-commands
+bash train_resnet18.sh --dry-run
 ```
 
-Printed commands use the separate topic `optimizers_reproduce` to keep the original runs unchanged. After training, plot those runs with `--runs runs/petr/optimizers_reproduce`. The script uses the shared EER checkpoint protocol; no changes to the training loop are required.
+The script calls the shared `iml-train` CLI sequentially and stops if a run fails. It uses ImageNet fine-tuning and the standard validation-EER checkpoint selection, with no changes to the training loop.
 
-Run suffixes R1–R7: `f1036b`, `0a3948`, `c591f3`, `9279f2`, `646c9d`, `4822d8`, `cd08a0` under `runs/petr/optimizers/`. Dataset SHA1: `10ac1fb033e3b1845bc52ea2e2229c2982ad11f0`. Training code: `63bdcea`.
+New results are saved under `runs/petr/optimizers_reproduce/`; the original `runs/petr/optimizers/` results are preserved. Finished runs in the target topic may be reused by the CLI rather than retrained. Use a new topic for a fresh repeat:
 
-Commit only the README, two figures and reproduction script. Keep weights and raw run artifacts outside the report commit.
+```bash
+TOPIC=optimizers_repeat_01 bash train_resnet18.sh
+```
+
+The dataset defaults to `data/training_dataset_v2`; set `DATA_DIR` to use another location containing the same fixed split. Weights, metrics, predictions and per-epoch histories stay in the run folders, outside this report commit.
+
+Original run suffixes R1–R7: `f1036b`, `0a3948`, `c591f3`, `9279f2`, `646c9d`, `4822d8`, `cd08a0`. Dataset SHA1: `10ac1fb033e3b1845bc52ea2e2229c2982ad11f0`. Original training code: `63bdcea`. GPU results may differ between repeats.
