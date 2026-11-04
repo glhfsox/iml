@@ -90,26 +90,12 @@ These results use one seed and a small test set. Test results were inspected bet
 
 ## Reproduce
 
-Run all seven experiments from the repository root:
+Open [`experiments.ipynb`](../../notebooks/petr/resnet18/experiments.ipynb) with the project's Python environment and run sections 1–3 in order. It is adapted from `notebooks/_template/architecture/experiments.ipynb` and contains the seven explicit configurations, cached training via the shared `fit()`, a compact comparison and the report's learning curves. Section 4 optionally logs quality metrics to MLflow.
 
-```bash
-bash train_resnet18.sh
-```
+The default topic is `optimizers`, matching the original runs under `runs/petr/optimizers/`. Finished runs are loaded only after checking the data fingerprint and configuration. Missing runs are trained. The notebook reads the old `checkpoint_metric=eer` config field in memory for compatibility; it does not change saved artifacts or the shared training code.
 
-Inspect the commands without starting training:
+For a fresh repeat, change `TOPIC` to a new value in the setup cell before running training, or set `IML_TOPIC` before starting the kernel. Set `IML_DATA` if the dataset is stored elsewhere. Keep the same fixed split when comparing settings.
 
-```bash
-bash train_resnet18.sh --dry-run
-```
-
-The script calls the shared `iml-train` CLI sequentially and stops if a run fails. It uses ImageNet fine-tuning and the standard validation-EER checkpoint selection, with no changes to the training loop.
-
-New results are saved under `runs/petr/optimizers_reproduce/`; the original `runs/petr/optimizers/` results are preserved. Finished runs in the target topic may be reused by the CLI rather than retrained. Use a new topic for a fresh repeat:
-
-```bash
-TOPIC=optimizers_repeat_01 bash train_resnet18.sh
-```
-
-The dataset defaults to `data/training_dataset_v2`; set `DATA_DIR` to use another location containing the same fixed split. Weights, metrics, predictions and per-epoch histories stay in the run folders, outside this report commit.
+Weights, predictions, histories and generated comparisons stay in the run folders. Commit the notebook with its outputs cleared.
 
 Original run suffixes R1–R7: `f1036b`, `0a3948`, `c591f3`, `9279f2`, `646c9d`, `4822d8`, `cd08a0`. Dataset SHA1: `10ac1fb033e3b1845bc52ea2e2229c2982ad11f0`. Original training code: `63bdcea`. GPU results may differ between repeats.
