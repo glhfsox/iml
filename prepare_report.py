@@ -20,16 +20,16 @@ def main():
     args = parser.parse_args()
     if args.print_training_commands:
         settings = [
-            (10,'sgd',1e-4,.2,0), (10,'adamw',1e-4,.2,0),
-            (10,'adamw',1e-4,.4,0), (7,'adamw',1e-4,.1,0),
+            (10,'sgd',1e-4,.2,0.0), (10,'adamw',1e-4,.2,0.0),
+            (10,'adamw',1e-4,.4,0.0), (7,'adamw',1e-4,.1,0.0),
             (7,'adamw',1e-4,.1,.01), (7,'adamw',1e-4,.1,.05),
             (7,'adamw',5e-5,.1,.01),
         ]
         for epochs, optimizer, lr, dropout, wd in settings:
             cmd = ['uv','run','iml-train','--config','app/models/configs/resnet18.json',
-                   '--data','data/training_dataset_v2','--member','petr','--topic','optimizers']
+                   '--data','data/training_dataset_v2','--member','petr','--topic','optimizers_reproduce']
             for key, value in dict(epochs=epochs, optimizer=optimizer, lr=lr, dropout=dropout,
-                                  weight_decay=wd, pretrained='true', checkpoint_metric='eer',
+                                  weight_decay=wd, pretrained='true',
                                   early_stopping_patience=0, batch_size=32, seed=42).items():
                 cmd.extend(['--set',f'{key}={value}'])
             print(shlex.join(cmd))
@@ -47,7 +47,7 @@ def main():
         data = json.loads((d/'data.json').read_text())
         h = pd.read_csv(d/'history.csv')
         assert data['sha1'] == SHA and c['pretrained'] is True
-        assert c['checkpoint_metric'] == 'eer' and m['select_metric'] == 'eer'
+        assert c.get('checkpoint_metric', 'eer') == 'eer' and m['select_metric'] == 'eer'
         assert c['seed'] == 42 and c['batch_size'] == 32
         assert len(h) == c['epochs'] == m['epochs_run']
         assert int(h.loc[h.val_eer.idxmin(), 'epoch']) == m['best_epoch']

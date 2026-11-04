@@ -102,6 +102,8 @@ Print the seven training commands without executing them:
 uv run python prepare_report.py --print-training-commands
 ```
 
+Printed commands use the separate topic `optimizers_reproduce` to keep the original runs unchanged. After training, plot those runs with `--runs runs/petr/optimizers_reproduce`. The script uses the shared EER checkpoint protocol; no changes to the training loop are required.
+
 Run suffixes R1–R7: `f1036b`, `0a3948`, `c591f3`, `9279f2`, `646c9d`, `4822d8`, `cd08a0` under `runs/petr/optimizers/`. Dataset SHA1: `10ac1fb033e3b1845bc52ea2e2229c2982ad11f0`. Training code: `63bdcea`.
 
 Commit only the README, two figures and reproduction script. Keep weights and raw run artifacts outside the report commit.

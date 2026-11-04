@@ -1,25 +1,25 @@
 """The one training loop everybody uses: ``fit(cfg, loaders) -> RunRecord``.
 
 Features: optimizer/scheduler from config, AMP on the GPU (HIP/ROCm or CUDA), gradient
-clipping, early stopping and checkpoint selection on the configured validation metric,
-best/last checkpoints,
-per-epoch history, a decision threshold chosen on the validation set (FAR == FRR point) and
+clipping, early stopping and checkpoint selection on validation EER, best/last checkpoints,
+per-epoch history, the loss of ``cfg.loss`` and two-phase fine-tuning (``cfg.finetune_from``,
+see ``iml.imbalance``), a decision threshold chosen on the validation set (FAR == FRR point) and
 FAR/FRR/EER on every split at that threshold, optional Monte-Carlo dropout, optional MLflow,
 and a verified ``model.onnx`` next to ``best.pt`` (``cfg.export_onnx``).
 
 The device and reproducibility helpers every run uses sit at the top: ``get_device`` /
-``device_info`` / ``GPU`` (AMD GPU via HIP (ROCm) or NVIDIA via CUDA -> Apple MPS -> CPU) and
-``seed_everything``.
+``GPU``
 """
 
 from __future__ import annotations
 
 import math
 import os
-import platform
 import random
 import time
 import warnings
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +30,15 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from iml.config import ExperimentConfig
+from iml.data import make_loaders
 from iml.export import export_onnx, export_verified
+from iml.imbalance import (
+    balanced_subset,
+    criterion,
+    dataset_labels,
+    freeze_backbone,
+    keep_frozen_bn_eval,
+)
 from iml.models import build_model, check_knobs, count_params
 from iml.models.spec import describe_spec
 from iml.runs import (
@@ -45,7 +53,6 @@ from iml.runs import (
     save_checkpoint,
     save_history,
     save_json,
-    write_env,
 )
 from iml.tracking import Tracker
 
@@ -55,7 +62,7 @@ from iml.tracking import Tracker
 #
 # PyTorch exposes the HIP backend under the ``"cuda"`` device name (``torch.device("hip")``
 # does not exist), so on the ROCm server ``get_device()`` returns ``cuda`` and the AMD card is
-# used. ``torch.version.hip`` tells the two apart; env.json records it.
+# used. ``torch.version.hip`` tells the two apart.
 # =================================================================================================
 
 GPU = "cuda"  # device string PyTorch uses for both HIP (ROCm) and CUDA
@@ -76,22 +83,6 @@ def get_device(prefer: str | None = None) -> torch.device:
     if torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
-
-
-def device_info(device: torch.device) -> dict[str, Any]:
-    """Human-readable facts about the device, saved into every run's env.json."""
-    info: dict[str, Any] = {
-        "device": str(device),
-        "backend": ("hip" if is_hip() else "cuda") if device.type == GPU else device.type,
-        "torch": torch.__version__,
-        "python": platform.python_version(),
-        "platform": platform.platform(),
-    }
-    if device.type == GPU:
-        info["gpu"] = torch.cuda.get_device_name(0)
-        info["hip"] = getattr(torch.version, "hip", None)  # ROCm version on AMD builds
-        info["cuda"] = torch.version.cuda  # None on ROCm builds
-    return info
 
 
 # =================================================================================================
@@ -145,16 +136,6 @@ def build_scheduler(cfg: ExperimentConfig, optimizer: torch.optim.Optimizer):
     raise ValueError(f"scheduler must be none|cosine|step, got {cfg.scheduler!r}")
 
 
-def dataset_labels(loader: DataLoader) -> np.ndarray:
-    """Labels of a loader's dataset without decoding audio when the dataset exposes them."""
-    ds = loader.dataset
-    if hasattr(ds, "labels"):
-        return np.asarray(ds.labels)
-    if hasattr(ds, "items"):
-        return np.asarray([int(label) for _, label in ds.items])
-    return np.asarray([int(y) for _, y in ds])
-
-
 def class_weights(cfg: ExperimentConfig, loader: DataLoader) -> torch.Tensor | None:
     """Inverse-frequency cross-entropy weights (``class_weight="balanced"``) or None."""
     if cfg.class_weight == "none":
@@ -200,19 +181,24 @@ def evaluate(
     mc_samples: int = 0,
     threshold: float = 0.5,
     weight: torch.Tensor | None = None,
+    loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
 ) -> dict[str, Any]:
-    """Loss + FAR/FRR/EER/F1/accuracy over a loader at ``threshold``; also raw scores/labels."""
+    """Loss + FAR/FRR/EER/F1/accuracy over a loader at ``threshold``; also raw scores/labels.
+
+    The loss is ``loss_fn`` (default: cross-entropy with ``weight``) over the whole split at once.
+    """
     model.eval()
-    losses, scores, stds, labels = [], [], [], []
+    logits, scores, stds, labels = [], [], [], []
     for x, y in loader:
         x, y = x.to(device), y.to(device)
-        logits = model(x)
-        losses.append(nn.functional.cross_entropy(logits, y, weight=weight, reduction="sum").item())
+        logits.append(model(x).float())
         p, s = predict_proba(model, x, mc_samples)
-        scores.append(p.cpu()), stds.append(s.cpu()), labels.append(y.cpu())
-    scores, stds, labels = (torch.cat(t).numpy() for t in (scores, stds, labels))
+        scores.append(p.cpu()), stds.append(s.cpu()), labels.append(y)
+    loss_fn = loss_fn or partial(nn.functional.cross_entropy, weight=weight)
+    loss = loss_fn(torch.cat(logits), torch.cat(labels)).item()
+    scores, stds, labels = (torch.cat(t).cpu().numpy() for t in (scores, stds, labels))
     out = classification_metrics(labels, (scores >= threshold).astype(int), scores)
-    out["loss"] = float(sum(losses) / max(1, len(labels)))
+    out["loss"] = float(loss)
     out["threshold"] = float(threshold)
     if mc_samples > 0:
         out["mc_std_mean"] = float(stds.mean())
@@ -224,30 +210,24 @@ def _public(metrics: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in metrics.items() if not k.startswith("_")}
 
 
-def _selection_score(ev: dict[str, Any], metric: str = "eer") -> float:
-    """Higher is better: negate the configured quantity to minimize it.
-
-    EER remains the backward-compatible default, with macro-F1 as its single-class fallback.
-    Loss selection uses the same criterion for checkpoint retention and early stopping.
-    """
-    if metric == "loss":
-        loss = float(ev["loss"])
-        if not math.isfinite(loss):
-            raise ValueError("Non-finite validation loss; checkpoint selection refused")
-        return -loss
+def _selection_score(ev: dict[str, Any]) -> float:
+    """Higher is better: negative EER (threshold-free, the spec's criterion); macro-F1 if EER
+    is undefined (single-class validation set)."""
     e = ev.get("eer", float("nan"))
     return -e if math.isfinite(e) else ev["macro_f1"]
 
 
-def train_one_epoch(model, loader, optimizer, device, scaler, cfg, weight) -> float:
+def train_one_epoch(model, loader, optimizer, device, scaler, cfg, loss_fn) -> float:
     model.train()
+    if cfg.finetune_from:
+        keep_frozen_bn_eval(model)
     total, n = 0.0, 0
     use_amp = scaler is not None
     for x, y in loader:
         x, y = x.to(device), y.to(device)
         optimizer.zero_grad(set_to_none=True)
         with torch.autocast(device_type=GPU, enabled=use_amp):  # GPU = HIP or CUDA
-            loss = nn.functional.cross_entropy(model(x), y, weight=weight)
+            loss = loss_fn(model(x), y)
         if use_amp:
             scaler.scale(loss).backward()
             if cfg.grad_clip > 0:
@@ -314,21 +294,28 @@ def fit(
     out.mkdir(parents=True, exist_ok=True)
     (out / "model.onnx").unlink(missing_ok=True)  # never ship a previous run's graph
     cfg.to_json(out / "config.json")
-    write_env(out / "env.json", device)
 
-    model = build_model(cfg).to(device)
+    model = build_model(cfg, load_pretrained=not cfg.finetune_from).to(device)
+    train_loader = loaders["train"]
+    if cfg.finetune_from:  # two-phase fine-tuning, phase 2: head only, balanced train subset
+        src = Path(cfg.finetune_from)
+        src = src / "best.pt" if src.is_dir() else src
+        model.load_state_dict(load_checkpoint(src, device)["state_dict"])
+        freeze_backbone(model)
+        balanced = {"train": balanced_subset(train_loader.dataset, cfg.seed)}
+        train_loader = make_loaders(balanced, cfg, train_loader.num_workers)["train"]
     train_model = torch.compile(model) if cfg.torch_compile else model
     optimizer = build_optimizer(cfg, model)
     scheduler = build_scheduler(cfg, optimizer)
     scaler = torch.amp.GradScaler(GPU) if (cfg.amp and device.type == GPU) else None
-    weight = class_weights(cfg, loaders["train"])
+    weight = class_weights(cfg, train_loader)
     weight = weight.to(device) if weight is not None else None
+    loss_fn = criterion(cfg, weight)
     tracker = tracker or Tracker()
     tracker.start(cfg, out.name)
     if verbose:
-        print(
-            f"run: {out}\nmodel: {cfg.model} ({count_params(model) / 1e6:.2f}M params) on {device}"
-        )
+        n_params = count_params(model, trainable_only=False) / 1e6
+        print(f"run: {out}\nmodel: {cfg.model} ({n_params:.2f}M params) on {device}")
 
     history: list[dict[str, Any]] = []
     best_score, best_epoch, bad_epochs = -math.inf, 0, 0
@@ -336,14 +323,14 @@ def fit(
     for epoch in epochs:
         t0 = time.time()
         train_loss = train_one_epoch(
-            train_model, loaders["train"], optimizer, device, scaler, cfg, weight
+            train_model, train_loader, optimizer, device, scaler, cfg, loss_fn
         )
         row: dict[str, Any] = {
             "epoch": epoch,
             "train_loss": train_loss,
             "lr": optimizer.param_groups[0]["lr"],
         }
-        ev = _public(evaluate(model, loaders[select_split], device, weight=weight))
+        ev = _public(evaluate(model, loaders[select_split], device, loss_fn=loss_fn))
         row.update({f"val_{k}": v for k, v in ev.items() if k not in ("n", "n_pos", "n_neg")})
         row["time_s"] = time.time() - t0
         if scheduler is not None:
@@ -357,7 +344,7 @@ def fit(
             frr=f"{ev['frr']:.2f}",
         )
 
-        score = _selection_score(ev, cfg.checkpoint_metric)
+        score = _selection_score(ev)
         if score > best_score:
             best_score, best_epoch, bad_epochs = score, epoch, 0
             save_checkpoint(out / "best.pt", model, cfg, epoch, ev)
@@ -383,15 +370,9 @@ def fit(
     metrics: dict[str, Any] = {
         "best_epoch": best_epoch,
         "epochs_run": epoch,
-        "params": count_params(model),
+        "params": count_params(model, trainable_only=False),
         "select_split": select_split,
-        "select_metric": (
-            "loss"
-            if cfg.checkpoint_metric == "loss"
-            else "eer"
-            if math.isfinite(sel.get("eer", float("nan")))
-            else "macro_f1"
-        ),
+        "select_metric": "eer" if math.isfinite(sel.get("eer", float("nan"))) else "macro_f1",
         "decision_threshold": threshold,
     }
     for split, loader in loaders.items():

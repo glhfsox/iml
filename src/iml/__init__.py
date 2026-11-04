@@ -3,10 +3,18 @@
 Public API (what notebooks and the app import)::
 
     from iml import ExperimentConfig, build_model, fit, load_run, find_runs, make_loaders
+    from iml import imbalance_report, balanced_subset  # class-imbalance toolkit (iml.imbalance)
 """
 
 from iml.config import MODEL_NAMES, ExperimentConfig
 from iml.data import LogMelSpectrogram, SpectrogramDataset, load_wav, make_loaders, save_wav
+from iml.imbalance import (
+    balanced_subset,
+    focal_loss,
+    freeze_backbone,
+    imbalance_report,
+    soft_f1_loss,
+)
 from iml.models import build_model, count_params
 from iml.runs import (
     RUNS_ROOT,
@@ -33,6 +41,12 @@ __all__ = [
     "LogMelSpectrogram",
     "SpectrogramDataset",
     "make_loaders",
+    # class imbalance
+    "imbalance_report",
+    "balanced_subset",
+    "focal_loss",
+    "soft_f1_loss",
+    "freeze_backbone",
     # models
     "build_model",
     "count_params",
