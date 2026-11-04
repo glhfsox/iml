@@ -9,7 +9,7 @@ __pycache__/
 .DS_Store
 .mypy_cache
 *.json
-
+*.csv
 # data
 /data/
 *.wav

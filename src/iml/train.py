@@ -314,9 +314,8 @@ def fit(
     tracker = tracker or Tracker()
     tracker.start(cfg, out.name)
     if verbose:
-        print(
-            f"run: {out}\nmodel: {cfg.model} ({count_params(model) / 1e6:.2f}M params) on {device}"
-        )
+        n_params = count_params(model, trainable_only=False) / 1e6
+        print(f"run: {out}\nmodel: {cfg.model} ({n_params:.2f}M params) on {device}")
 
     history: list[dict[str, Any]] = []
     best_score, best_epoch, bad_epochs = -math.inf, 0, 0
@@ -371,7 +370,7 @@ def fit(
     metrics: dict[str, Any] = {
         "best_epoch": best_epoch,
         "epochs_run": epoch,
-        "params": count_params(model),
+        "params": count_params(model, trainable_only=False),
         "select_split": select_split,
         "select_metric": "eer" if math.isfinite(sel.get("eer", float("nan"))) else "macro_f1",
         "decision_threshold": threshold,

@@ -26,8 +26,13 @@ MODEL_NAMES = (
 # Architecture knobs of the old hand-written models; old checkpoints may still carry them.
 _LEGACY_KEYS = {"width", "depth", "bn_position", "activation"}
 
+LOSSES = ("ce", "focal", "soft_f1")  # iml.imbalance.criterion
+
 # Fields that do not change the experiment itself and are excluded from the run name/hash.
 _BOOKKEEPING = {"member", "topic", "tags", "notes", "num_workers", "export_onnx"}
+
+# Fields added after runs existed: hashed only when changed, so older run folders keep their names.
+_HASHED_IF_SET = {"loss", "focal_gamma", "finetune_from"}
 
 
 @dataclass
@@ -73,6 +78,11 @@ class ExperimentConfig:
     momentum: float = 0.9  # sgd only
     weight_decay: float = 0.0
     class_weight: str = "none"  # none | balanced (inverse-frequency CE weights from the train set)
+    loss: str = "ce"  # ce | focal | soft_f1 (differentiable macro-F1), see iml.imbalance
+    focal_gamma: float = 2.0  # loss=focal only
+    # two-phase fine-tuning, phase 2: phase-1 run folder whose best.pt initialises the model;
+    # only the head trains, on a balanced subset of the train split (iml.imbalance)
+    finetune_from: str = ""
     scheduler: str = "none"  # none | cosine | step
     batch_size: int = 32
     epochs: int = 20
@@ -101,6 +111,12 @@ class ExperimentConfig:
             raise ValueError(f"arch is only used by model='custom'; {self.model} needs arch=[]")
         if self.epochs < 1:
             raise ValueError("epochs must be >= 1")
+        if self.loss not in LOSSES:
+            raise ValueError(f"loss must be one of {LOSSES}, got {self.loss!r}")
+        if self.loss == "soft_f1" and self.class_weight != "none":
+            raise ValueError("soft_f1 weighs the classes equally by itself; set class_weight=none")
+        if self.loss != "focal" and self.focal_gamma != 2.0:
+            raise ValueError("focal_gamma is only used by loss=focal")
         if self.mc_dropout_samples > 0 and self.dropout <= 0:
             raise ValueError(
                 "mc_dropout_samples > 0 needs dropout > 0, otherwise MC dropout is a no-op"
@@ -167,7 +183,12 @@ class ExperimentConfig:
         }
 
     def config_hash(self, n: int = 6) -> str:
-        payload = {k: v for k, v in self.to_dict().items() if k not in _BOOKKEEPING}
+        defaults = {f.name: f.default for f in fields(self) if f.name in _HASHED_IF_SET}
+        payload = {
+            k: v
+            for k, v in self.to_dict().items()
+            if k not in _BOOKKEEPING and not (k in defaults and v == defaults[k])
+        }
         return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:n]
 
     def run_name(self, max_slug: int = 60) -> str:
@@ -177,8 +198,8 @@ class ExperimentConfig:
         """
         parts = []
         for k, v in sorted(self.diff_from_default().items()):
-            if isinstance(v, dict | list):
-                v = "x"  # content is in config.json; keep the name short
+            if isinstance(v, dict | list) or k == "finetune_from":
+                v = "x"  # content is in config.json; keep the name short (and free of "/")
             parts.append(f"{k.replace('_', '-')}{'-' if isinstance(v, str) else ''}{v}")
         slug = "_".join(parts)[:max_slug].rstrip("_-")
         return "_".join(p for p in (self.model, slug, self.config_hash()) if p)
