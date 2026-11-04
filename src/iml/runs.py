@@ -8,7 +8,6 @@ runs/<member>/<topic>/<run_name>/
     metrics.png    val macro-F1, FAR, FRR vs epoch
     best.pt        state_dict + config of the best-val epoch (what app/ loads)
     last.pt        state_dict of the final epoch (for resuming)
-    env.json       git commit, torch/python versions, device, timestamp
 
 Also the metrics required by the project description that go into ``metrics.json``: FAR, FRR
 (+ EER, accuracy, macro-F1): ``far``, ``frr``, ``eer``, ``classification_metrics`` (bottom).
@@ -17,9 +16,7 @@ Also the metrics required by the project description that go into ``metrics.json
 from __future__ import annotations
 
 import json
-import subprocess
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -47,29 +44,6 @@ def save_json(obj: Any, path: str | Path) -> None:
 
 def load_json(path: str | Path) -> Any:
     return json.loads(Path(path).read_text())
-
-
-def git_commit() -> str | None:
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5
-        )
-        return out.stdout.strip() or None
-    except (OSError, subprocess.SubprocessError):
-        return None
-
-
-def write_env(path: str | Path, device: torch.device) -> None:
-    from iml.train import device_info  # lazy: iml.train imports this module
-
-    save_json(
-        {
-            "git_commit": git_commit(),
-            "time": datetime.now().isoformat(timespec="seconds"),
-            **device_info(device),
-        },
-        path,
-    )
 
 
 def save_history(history: list[dict[str, Any]], directory: Path) -> pd.DataFrame:
