@@ -91,6 +91,11 @@ Please add the short class-imbalance report with each experiment. Simply the rat
 Get it with `imbalance_report(loaders["train"])["ratio"]`; for imbalance-aware training set
 `loss=focal|soft_f1` or `class_weight=balanced`, and for two-phase fine-tuning run `rec = fit(cfg, loaders)`
 then `fit(cfg.with_overrides(f"finetune_from={rec.path}"), loaders)` (head only, balanced train subset).
+Phase 1 must start from ImageNet weights (`pretrained=true`) and train the whole network with plain
+`loss=ce`, `class_weight=none`. Phase 2 keeps the same `model`, plain `loss=ce` and a lower `lr` (e.g.
+`lr=1e-4`) and trains only the head on a balanced train subset drawn once per run from `seed`.
+Under strong imbalance compare runs by EER/FAR/FRR and macro-F1 (on the same test set), not by
+accuracy or loss values (CE/focal/soft-F1 are training objectives with different scales).
 
 
 `data/training_dataset_v2` is currently the **single source of unified data for binary model
