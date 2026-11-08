@@ -34,3 +34,10 @@ app/models/configs/
 
 
 tg/
+
+# Local threshold and per-clip diagnostic figures/tables
+/notebooks/spdsslg/reports/efficientnetv2_s/threshold_diagnostics/
+
+# Generated ROC/AUC figures remain local
+/notebooks/spdsslg/reports/efficientnetv2_s/*roc*.png
+/notebooks/spdsslg/reports/efficientnetv2_s/*auc*.png
