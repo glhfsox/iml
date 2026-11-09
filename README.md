@@ -132,6 +132,33 @@ and mounted data directory. `iml-data build` can build datasets from separately 
 recordings and labels; Telegram collector code exists only in Git history. The builder adds
 no noise/reverb/pitch augmentation, and `cfg.augment` is unused by the current training loader.
 
+## Exporting spectrogram pictures
+
+[export_spectrograms.py](src/iml/export_spectrograms.py) saves one PNG per clip using the
+same log-mel transform and normalization as the training loader. Select any dataset that
+follows [DATA_CONTRACT.md](DATA_CONTRACT.md):
+
+```bash
+# Default output: data/training_dataset_v2/spectrograms/
+uv run python -m iml.export_spectrograms --data data/training_dataset_v2
+
+# Choose another dataset and output folder
+uv run python -m iml.export_spectrograms --data data/training_dataset_v3 --out /tmp/v3-spectrograms
+```
+
+Images are grouped by split and allowed/invalid class. `spectrogram_index.csv` maps pictures
+to clips; `export_metadata.json` records the frontend settings and input dataset checksum.
+Defaults use 80 mel bands, FFT 512, hop 160, and per-sample normalization. Pass
+`--config path/to/config.json` to use an experiment's frontend settings.
+
+Unchanged exports skip existing pictures. Use `--overwrite` to recreate them when data or
+settings change; `--dpi` controls image resolution. Run with `--help` for all options.
+The script preserves input waveforms, labels, and splits. The PNGs are for inspection:
+models receive the numerical spectrogram tensors directly, rather than loading these images.
+
+For dataset composition, audio-quality plots, and examples, see the
+[recording EDA notebook guide](notebooks/eda/DATA_ANALYSIS.md).
+
 ## Server workflow
 
 ```bash
