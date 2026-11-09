@@ -40,8 +40,8 @@ matching provenance files or documented filename conventions supply recording/sp
 Results are kept separately for each dataset:
 
 ```text
-notebooks/eda/
-  README.md
+notebooks/spdsslg/eda/
+  DATA_ANALYSIS.md
   recordings.ipynb
   reports/
     training_dataset_v2/
@@ -51,28 +51,10 @@ notebooks/eda/
 
 Each report folder contains five figures, summary tables, per-clip measurements,
 `observations.md`, and metadata recording the settings, software versions, seed, and input
-checksum. The checksum confirms that input data stayed unchanged. Reports are gitignored;
-the figure links below work locally after running the notebook.
-
-### Optional spectrogram export
-
-`EXPORT_ALL_SPECTROGRAMS = False` still produces all analysis plots and representative
-spectrograms. Set it to `True` to additionally save **one PNG per clip** under
-`<dataset>/spectrograms/`, grouped by split and allowed/invalid class.
-
-The exporter calls the training loader's own spectrogram code. PNGs visualize the model's
-inputs; they do not replace the audio arrays used for training. An index links each image
-to its clip, and metadata records the settings. Unchanged exports can resume.
-
-To export independently to a chosen folder:
-
-```bash
-/opt/venv/bin/python -m iml.export_spectrograms \
-  --data data/training_dataset_v2 \
-  --out data/training_dataset_v2/spectrograms
-```
-
-Use `--config` for an experiment's frontend settings; see `--help` for other options.
+checksum. The checksum confirms that input data stayed unchanged. The v2 PNG figures and
+`observations.md` are included as the example report. Reports for v3/v4 are local and
+gitignored; JSON metadata and CSV files are also ignored. Tables and per-clip measurements
+are displayed in the notebook. The figure links below point to the v2 example report.
 
 ## v2 at a glance
 
@@ -186,6 +168,12 @@ bands run bottom to top. Lighter areas indicate stronger values within that pane
 all-clip statistics. Both spectrogram columns retain gaps and frequency patterns: normalization
 rescales features rather than cleaning audio. Their units differ, so brightness cannot measure
 a loudness change. These are representative examples, not every clip in each group.
+
+Pictures share fixed color limits within each mode: raw log-mel uses −80 to 40 dB,
+`global` uses −1 to 2 (the same dB range after its scaling), and `per_sample` uses −3 to 5.
+This makes colors comparable across images and datasets using the same mode. Values outside
+these ranges use the endpoint colors; the underlying tensors are unchanged. Different modes
+still use different units, so colors are not directly comparable between modes.
 
 ## General observations from v2
 

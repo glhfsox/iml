@@ -35,11 +35,6 @@ app/models/configs/
 
 tg/
 
-# Generated recording EDA figures and tables
-/notebooks/spdsslg/reports/training_dataset_v2_eda/
-/notebooks/spdsslg/eda/reports/training_dataset_v3
-/notebooks/spdsslg/eda/reports/training_dataset_v4
-
-/notebooks/spdsslg/reports/efficientnetv2_s/final_test_roc.png
-/notebooks/spdsslg/reports/efficientnetv2_s/validation_roc_overlay.png
-/notebooks/spdsslg/reports/efficientnetv2_s/validation_roc_per_run.png
+# Local EDA reports; v2 example figures and observations are versioned
+/notebooks/spdsslg/eda/reports/training_dataset_v3/
+/notebooks/spdsslg/eda/reports/training_dataset_v4/

@@ -147,17 +147,19 @@ uv run python -m iml.export_spectrograms --data data/training_dataset_v3 --out /
 ```
 
 Images are grouped by split and allowed/invalid class. `spectrogram_index.csv` maps pictures
-to clips; `export_metadata.json` records the frontend settings and input dataset checksum.
+to clips; `export_metadata.json` records the frontend settings and image count.
 Defaults use 80 mel bands, FFT 512, hop 160, and per-sample normalization. Pass
-`--config path/to/config.json` to use an experiment's frontend settings.
+`--config path/to/config.json` to use an experiment's frontend settings. Pictures share fixed
+color limits within each normalization mode, so their colors can be compared across clips;
+values outside the display range saturate without changing model inputs.
 
-Unchanged exports skip existing pictures. Use `--overwrite` to recreate them when data or
-settings change; `--dpi` controls image resolution. Run with `--help` for all options.
+Each run redraws pictures, replacing existing PNGs at the same paths so changed inputs and
+settings take effect. `--dpi` controls image resolution. Run with `--help` for all options.
 The script preserves input waveforms, labels, and splits. The PNGs are for inspection:
 models receive the numerical spectrogram tensors directly, rather than loading these images.
 
 For dataset composition, audio-quality plots, and examples, see the
-[recording EDA notebook guide](notebooks/eda/DATA_ANALYSIS.md).
+[recording EDA notebook guide](notebooks/spdsslg/eda/DATA_ANALYSIS.md).
 
 ## Server workflow
 
