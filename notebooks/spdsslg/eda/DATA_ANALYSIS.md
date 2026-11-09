@@ -36,6 +36,8 @@ DATASET_NAME = "training_dataset_v2"  # or training_dataset_v3 / training_datase
 The existing setting also accepts an `IML_EDA_DATASET` environment override; the notebook
 prints the actual input path. Absolute dataset paths work too. CSVs determine the labels;
 matching provenance files or documented filename conventions supply recording/speaker IDs.
+Only clips listed in `train.csv`, `val.csv`, and `test.csv` are analyzed; extra files in the
+audio folder are not added automatically.
 
 Results are kept separately for each dataset:
 

@@ -1,35 +1,17 @@
-"""Draw model-input spectrograms and save them as PNG pictures.
+"""Draw and save model-input spectrograms using the existing data loader.
 
-Run from the repository root in the project environment::
-
-    python -m iml.export_spectrograms --data data/training_dataset_v2
-    python -m iml.export_spectrograms --data data/training_dataset_v3 --out /tmp/v3-pictures
-    python -m iml.export_spectrograms --data data/training_dataset_v2 --config path/to/config.json
-
-The default output is DATA/spectrograms. Each PNG is grouped by split/class and
-preserves the input clip's relative path. spectrogram_index.csv maps images to
-clips; export_metadata.json records the frontend settings. Each run redraws the
-selected images, including existing ones, so changed inputs/settings take effect.
-
-Manifest parsing and validation come from iml.contract. SpectrogramDataset computes
-exactly the evaluation input tensor: log-mel power, dB conversion, then configured
-normalization. Native three-second clips need no cropping. Only the rendered PNG
-uses a colormap; the model receives the numerical tensor, not this image.
-Pictures share fixed color limits within each normalization mode, including
-across datasets. Values outside the display range saturate without changing
-the tensor. Raw dB, scaled dB, and per-sample units remain different quantities.
-
-The Python API returns the clip-to-image index as a DataFrame.
+Usage: python -m iml.export_spectrograms --data data/training_dataset_v2 --out /tmp/pictures
+The default output is DATA/spectrograms. PNGs preserve split/class and clip paths;
+repeated runs replace them. No CSV/JSON sidecars or cache files are generated.
+Color limits are shared within each normalization mode. Model inputs stay unchanged.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import torch
 from tqdm.auto import tqdm
 
@@ -38,8 +20,6 @@ from iml.contract import SPLITS, read_split, validate_dataset
 from iml.data import SpectrogramDataset
 
 FRONTEND_FIELDS = ("sample_rate", "excerpt_sec", "n_fft", "hop_length", "n_mels", "normalize_input")
-
-# Display ranges only. "global" applies (dB + 40) / 40 to the raw dB limits.
 COLOR_LIMITS = {"none": (-80.0, 40.0), "global": (-1.0, 2.0), "per_sample": (-3.0, 5.0)}
 
 
@@ -81,6 +61,7 @@ def colorbar_label(cfg: ExperimentConfig) -> str:
     }[cfg.normalize_input]
 
 
+@torch.inference_mode()
 def export_spectrograms(
     data_dir: str | Path,
     output_dir: str | Path | None = None,
@@ -88,12 +69,8 @@ def export_spectrograms(
     *,
     dpi: int = 120,
     verbose: bool = True,
-) -> pd.DataFrame:
-    """Draw and save one PNG per clip, replacing existing images at the same paths.
-
-    Input waveforms, labels, and split manifests are never written. Validation
-    checks file headers once; each waveform is then loaded by SpectrogramDataset.
-    """
+) -> int:
+    """Save one PNG per clip and return the count, without writing input files."""
     import matplotlib.pyplot as plt
 
     data_dir = Path(data_dir).resolve()
@@ -103,60 +80,34 @@ def export_spectrograms(
         raise ValueError("DPI must be positive")
     if output_dir in (data_dir, data_dir / "audio"):
         raise ValueError("Choose a dedicated output folder, not the dataset root or audio folder")
-    errors = validate_dataset(data_dir)
-    if errors:
+    if errors := validate_dataset(data_dir):
         raise ValueError(errors)
-
-    rows = []
-    with torch.inference_mode():
-        for split in SPLITS:
-            items = read_split(data_dir, split)
-            dataset = SpectrogramDataset(items, cfg, train=False)
-            for i, (path, label) in enumerate(
-                tqdm(items, desc=f"PNG {split}", disable=not verbose)
-            ):
-                relative = path.relative_to(data_dir)
-                label_name = "allowed" if label == 1 else "invalid"
-                image_path = Path(split) / label_name / relative.with_suffix(".png")
-                target = output_dir / image_path
-                tensor, _ = dataset[i]
-                if not torch.isfinite(tensor).all():
-                    raise ValueError(f"Invalid frontend output for {relative}")
-                target.parent.mkdir(parents=True, exist_ok=True)
-                fig, ax = plt.subplots(figsize=(8, 3.2), layout="constrained")
-                try:
-                    image = draw_spectrogram(
-                        ax,
-                        tensor.squeeze(0).cpu().numpy(),
-                        cfg,
-                        title=f"{path.stem}\n{split} · allowed={label}",
-                    )
-                    fig.colorbar(image, ax=ax, label=colorbar_label(cfg), extend="both")
-                    fig.savefig(target, dpi=dpi)
-                finally:
-                    plt.close(fig)
-                rows.append(
-                    {
-                        "path": relative.as_posix(),
-                        "allowed": label,
-                        "split": split,
-                        "image": image_path.as_posix(),
-                    }
-                )
     output_dir.mkdir(parents=True, exist_ok=True)
-    index = pd.DataFrame(rows, columns=["path", "allowed", "split", "image"])
-    index.to_csv(output_dir / "spectrogram_index.csv", index=False)
-    metadata = {
-        "data_dir": str(data_dir),
-        "frontend": {k: getattr(cfg, k) for k in FRONTEND_FIELDS},
-        "color_limits": COLOR_LIMITS[cfg.normalize_input],
-        "dpi": dpi,
-        "image_count": len(index),
-    }
-    (output_dir / "export_metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    count = 0
+    for split in SPLITS:
+        items = read_split(data_dir, split)
+        dataset = SpectrogramDataset(items, cfg, train=False)
+        for i, (path, label) in enumerate(tqdm(items, desc=f"PNG {split}", disable=not verbose)):
+            relative = path.relative_to(data_dir).with_suffix(".png")
+            target = output_dir / split / ("allowed" if label else "invalid") / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tensor, _ = dataset[i]
+            fig, ax = plt.subplots(figsize=(8, 3.2), layout="constrained")
+            try:
+                image = draw_spectrogram(
+                    ax,
+                    tensor[0].cpu().numpy(),
+                    cfg,
+                    title=f"{path.stem}\n{split} · allowed={label}",
+                )
+                fig.colorbar(image, ax=ax, label=colorbar_label(cfg), extend="both")
+                fig.savefig(target, dpi=dpi)
+            finally:
+                plt.close(fig)
+            count += 1
     if verbose:
-        print(f"Saved {len(index)} spectrogram pictures: {output_dir}")
-    return index
+        print(f"Saved {count} spectrogram pictures: {output_dir}")
+    return count
 
 
 def main() -> None:
