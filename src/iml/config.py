@@ -80,6 +80,7 @@ class ExperimentConfig:
     class_weight: str = "none"  # none | balanced (inverse-frequency CE weights from the train set)
     loss: str = "ce"  # ce | focal | soft_f1 (differentiable macro-F1), see iml.imbalance
     focal_gamma: float = 2.0  # loss=focal only
+    undersampling: str = "none"  # none | rotating
     # two-phase fine-tuning, phase 2: phase-1 run folder whose best.pt initialises the model;
     # only the head trains, on a balanced subset of the train split (iml.imbalance)
     finetune_from: str = ""
@@ -120,6 +121,10 @@ class ExperimentConfig:
         if self.mc_dropout_samples > 0 and self.dropout <= 0:
             raise ValueError(
                 "mc_dropout_samples > 0 needs dropout > 0, otherwise MC dropout is a no-op"
+            )
+        if self.undersampling not in {"none", "rotating"}:
+            raise ValueError(
+                f"undersampling must be 'none' or 'rotating', got {self.undersampling!r}"
             )
 
     # ------------------------------------------------------------------ serialisation

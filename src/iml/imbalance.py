@@ -1,7 +1,9 @@
+
 """Class-imbalance toolkit: measure it, balance a split, imbalance-aware losses, head-only tuning.
 
 * analysis: ``dataset_labels``, ``imbalance_report`` (counts and majority-per-minority ratio);
 * balancing: ``balanced_indices`` / ``balanced_subset`` (undersampling to the smallest class);
+* rotating balancing: ``RotatingBalancedSampler`` (balanced epochs with rotating majority samples);
 * losses (``cfg.loss``): ``ce`` (+ ``class_weight="balanced"`` = weighted cross-entropy),
   ``focal`` (``focal_loss``), ``soft_f1`` (``soft_f1_loss``, differentiable macro-F1);
   ``criterion(cfg, weight)`` returns the one ``fit`` trains with;
@@ -24,7 +26,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Dataset, Sampler, Subset
 
 from iml.config import LOSSES, ExperimentConfig
 
@@ -35,6 +37,7 @@ __all__ = [
     # balancing
     "balanced_indices",
     "balanced_subset",
+    "RotatingBalancedSampler",
     # losses
     "LOSSES",
     "focal_loss",
@@ -81,7 +84,7 @@ def imbalance_report(data: Dataset | DataLoader | Any) -> dict[str, Any]:
 
 
 # =================================================================================================
-# balancing: random undersampling of every class to the size of the smallest one
+# balancing: random undersampling and rotating balanced sampling
 # =================================================================================================
 
 
@@ -105,6 +108,81 @@ def balanced_subset(dataset: Dataset, seed: int = 0) -> Subset:
     sub = Subset(dataset, idx.tolist())
     sub.labels = labels[idx]
     return sub
+
+
+class RotatingBalancedSampler(Sampler[int]):
+    """Balance two classes per epoch and rotate majority-class samples.
+
+    Every epoch contains all minority-class samples and an equal
+    number of majority-class samples.
+
+    Majority samples are drawn from a shuffled pool without replacement.
+    Once the pool is exhausted, a new shuffled cycle begins.
+
+    Sampling is deterministic for a given seed.
+    """
+
+    def __init__(self, labels, seed: int = 42):
+        self.labels = np.asarray(labels)
+        classes, counts = np.unique(self.labels, return_counts=True)
+
+        if len(classes) != 2:
+            raise ValueError("Expected exactly two classes")
+
+        self.minority = np.flatnonzero(
+            self.labels == classes[np.argmin(counts)]
+        )
+        self.majority = np.flatnonzero(
+            self.labels == classes[np.argmax(counts)]
+        )
+
+        self.n = len(self.minority)
+        self.rng = np.random.default_rng(seed)
+
+        self.pool = self.rng.permutation(self.majority)
+        self.position = 0
+
+    def __len__(self):
+        return 2 * self.n
+
+    def __iter__(self):
+        selected = []
+        used = set()
+
+        while len(selected) < self.n:
+            if self.position >= len(self.pool):
+                # Start a new shuffled cycle.
+                new_pool = self.rng.permutation(self.majority)
+
+                # Samples already selected in this epoch go to the end.
+                # This avoids duplicates within the same epoch.
+                unused = [
+                    int(i) for i in new_pool if int(i) not in used
+                ]
+                already_used = [
+                    int(i) for i in new_pool if int(i) in used
+                ]
+
+                self.pool = np.asarray(
+                    unused + already_used,
+                    dtype=int,
+                )
+                self.position = 0
+
+            candidate = int(self.pool[self.position])
+            self.position += 1
+
+            if candidate not in used:
+                selected.append(candidate)
+                used.add(candidate)
+
+        indices = np.concatenate([
+            self.minority,
+            np.asarray(selected, dtype=int),
+        ])
+
+        self.rng.shuffle(indices)
+        return iter(indices.tolist())
 
 
 # =================================================================================================
