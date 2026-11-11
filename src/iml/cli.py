@@ -14,7 +14,7 @@ share with the notebooks (``load_splits``, ``check_run_data``, ...).
 
 ``iml-compare [runs/<member>/<arch>] [--out comparison]``
     Text + table + plot comparison of all runs under a folder (PDF use case 5):
-      <out>/table.md / table.csv   one row per run: config diff + metrics per split
+      <out>/table.csv   one row per run: config diff + metrics per split
       <out>/loss.png, val_metrics.png   overlaid curves, one line per run
 
 ``iml-export --run runs/<member>/<topic>/<run> [--out model.onnx] [--opset 17] [--no-check]`` or
@@ -323,10 +323,8 @@ def compare_main(argv=None) -> None:
     out.mkdir(parents=True, exist_ok=True)
     df = summary_table(runs)
     df.to_csv(out / "table.csv", index=False)
-    md = df.to_markdown(index=False, floatfmt=".3f")
-    (out / "table.md").write_text(md)
     plot_curves(runs, out)
-    print(md)
+    print(df.to_markdown(index=False, floatfmt=".3f"))
     print(f"\nwritten to {out}")
 
 

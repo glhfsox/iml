@@ -61,12 +61,10 @@ def test_json_file_is_flat_and_complete(tmp_path):
     assert {"model", "lr", "n_mels", "seed"} <= set(d)
 
 
-def test_device_hip_alias_and_info():
+def test_device_hip_alias():
     import torch
 
-    from iml.train import GPU, device_info, get_device
+    from iml.train import GPU, get_device
 
     assert get_device("hip") == torch.device(GPU) == get_device("cuda")
     assert get_device("cpu").type == "cpu"
-    info = device_info(torch.device("cpu"))
-    assert info["backend"] == "cpu" and "torch" in info

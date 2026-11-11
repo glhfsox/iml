@@ -7,17 +7,14 @@ recording, models = CNNs trained from scratch or fine-tuned from ImageNet, metri
 ## Setup
 
 ```bash
-uv sync --group dev          # macOS: PyPI torch (MPS); Linux server: HIP/ROCm torch for the AMD GPU (see pyproject)
+uv sync --group dev
 uv run pytest                # fast CPU tests: config, metrics, data contract (no model building: models are checked by real GPU runs)
 make smoke DATA=data/training_dataset_v2    # two short runs + comparison table under runs/smoke/
 ```
 
-The Linux PyTorch index in `pyproject.toml` currently targets ROCm 7.2. Check compatibility
-with the training server GPU and driver before changing that index.
-
 GPU note: PyTorch drives the AMD card through HIP but names the device `cuda`
 (`torch.device("hip")` does not exist). `get_device()` picks it automatically, `--device hip`
-is accepted as an alias, `env.json` records `backend: hip` and the ROCm version, and AMP /
+is accepted as an alias, and AMP /
 `torch_compile` work the same way as on NVIDIA. Verify on the server with:
 
 ```bash
@@ -66,7 +63,7 @@ not retrained.
 uv run iml-train --config app/models/configs/resnet18.json --data data/training_dataset_v2 --member <you> --topic optimizers --set optimizer=sgd --set lr=0.01
 # a grid
 uv run iml-sweep --config app/models/configs/convnext_tiny.json --grid app/models/configs/grids/<arch>_lr.json --data data/training_dataset_v2 --member <you> --topic lr
-# compare everything under a folder -> table.md/csv + loss.png + val_metrics.png
+# compare everything under a folder -> table.csv + loss.png + val_metrics.png
 uv run iml-compare runs/<you>/lr
 ```
 
@@ -76,7 +73,7 @@ for each, call `summary_table` / `plot_curves`. Copy `notebooks/_template/` to
 parameter configs; see `notebooks/_template/architecture/experiments.ipynb`).
 
 Every run writes `config.json`, `metrics.json` (FAR/FRR/EER/F1/accuracy per split),
-`history.csv`, `loss.png`, `metrics.png`, `best.pt`, `last.pt`, `env.json`, `predictions_<split>.npz`
+`history.csv`, `loss.png`, `metrics.png`, `best.pt`, `last.pt`, `predictions_<split>.npz`
 and `model.onnx` (exported from `best.pt` at the end of `fit` and verified against PyTorch with
 onnxruntime; `export_onnx=false` skips it, `make export RUN=...` redoes it by hand).
 Set `mc_dropout_samples` > 0 (with `dropout` > 0) to evaluate with Monte-Carlo dropout.
@@ -89,6 +86,17 @@ run folder is loaded instead of retrained (`--overwrite` / `fit(..., overwrite=T
 With `pretrained=true` (the default) the ImageNet weights are loaded and `init` is ignored, so
 `build_model` refuses `pretrained=true` with a non-default `init`: a sweep cannot produce fake
 comparisons. Set `pretrained=false` to train from scratch with the chosen `init`.
+
+Please add the short class-imbalance report with each experiment. Simply the ratio of instances of both would be enough.
+Get it with `imbalance_report(loaders["train"])["ratio"]`; for imbalance-aware training set
+`loss=focal|soft_f1` or `class_weight=balanced`, and for two-phase fine-tuning run `rec = fit(cfg, loaders)`
+then `fit(cfg.with_overrides(f"finetune_from={rec.path}"), loaders)` (head only, balanced train subset).
+Phase 1 must start from ImageNet weights (`pretrained=true`) and train the whole network with plain
+`loss=ce`, `class_weight=none`. Phase 2 keeps the same `model`, plain `loss=ce` and a lower `lr` (e.g.
+`lr=1e-4`) and trains only the head on a balanced train subset drawn once per run from `seed`.
+Under strong imbalance compare runs by EER/FAR/FRR and macro-F1 (on the same test set), not by
+accuracy or loss values (CE/focal/soft-F1 are training objectives with different scales).
+
 
 `data/training_dataset_v2` is currently the **single source of unified data for binary model
 training**. Select it with `--data data/training_dataset_v2` or set
@@ -155,3 +163,5 @@ release/LFS scheme if we add one); `make init-models` is always enough to run th
 A frozen model folder holds only `model.onnx`: the run's config and decision threshold are stored
 in the graph's metadata, and the app runs it with onnxruntime (log-mel front end in PyTorch on
 CPU, no MC dropout). `--run` keeps the PyTorch path and also accepts a `.onnx` file.
+
+
