@@ -34,3 +34,7 @@ app/models/configs/
 
 
 tg/
+
+# Local EDA reports; v2 example figures and observations are versioned
+/notebooks/spdsslg/eda/reports/training_dataset_v3/
+/notebooks/spdsslg/eda/reports/training_dataset_v4/

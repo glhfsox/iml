@@ -132,6 +132,43 @@ and mounted data directory. `iml-data build` can build datasets from separately 
 recordings and labels; Telegram collector code exists only in Git history. The builder adds
 no noise/reverb/pitch augmentation, and `cfg.augment` is unused by the current training loader.
 
+## Exporting spectrogram pictures
+
+[export_spectrograms.py](src/iml/export_spectrograms.py) saves one PNG per clip using the
+same log-mel transform and normalization as the training loader. Select any dataset that
+follows [DATA_CONTRACT.md](DATA_CONTRACT.md):
+
+```bash
+# Default output: data/training_dataset_v2/spectrograms/
+uv run python -m iml.export_spectrograms --data data/training_dataset_v2
+
+# Choose another dataset and output folder
+uv run python -m iml.export_spectrograms --data data/training_dataset_v3 --out /tmp/v3-spectrograms
+
+# Use an experiment's frontend settings and choose picture resolution
+uv run python -m iml.export_spectrograms \
+  --data data/training_dataset_v2 --config path/to/config.json --dpi 150
+```
+
+Images are grouped by split and allowed/invalid class, preserving each clip's relative path.
+Only PNGs are saved; no CSV index or JSON metadata is generated.
+For example, an allowed training clip at `audio/clip.npy` becomes
+`<out>/train/allowed/audio/clip.png`.
+Defaults use 80 mel bands, FFT 512, hop 160, and per-sample normalization. Pass
+`--config path/to/config.json` to use an experiment's frontend settings. Pictures share fixed
+color limits within each normalization mode, so their colors can be compared across clips;
+values outside the display range saturate without changing model inputs.
+
+Each run redraws pictures, replacing existing PNGs at the same paths so changed inputs and
+settings take effect. `--dpi` controls image resolution and `--threads` limits CPU threads
+(default: 4). Run with `--help` for all options. Pictures use deterministic evaluation
+cropping; native three-second clips need no cropping.
+The script preserves input waveforms, labels, and splits. The PNGs are for inspection:
+models receive the numerical spectrogram tensors directly, rather than loading these images.
+
+For dataset composition, audio-quality plots, and examples, see the
+[recording EDA notebook guide](notebooks/spdsslg/eda/DATA_ANALYSIS.md).
+
 ## Server workflow
 
 ```bash
