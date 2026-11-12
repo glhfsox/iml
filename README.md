@@ -63,7 +63,7 @@ not retrained.
 uv run iml-train --config app/models/configs/resnet18.json --data data/training_dataset_v2 --member <you> --topic optimizers --set optimizer=sgd --set lr=0.01
 # a grid
 uv run iml-sweep --config app/models/configs/convnext_tiny.json --grid app/models/configs/grids/<arch>_lr.json --data data/training_dataset_v2 --member <you> --topic lr
-# compare everything under a folder -> table.md/csv + loss.png + val_metrics.png
+# compare everything under a folder -> table.csv + loss.png + val_metrics.png
 uv run iml-compare runs/<you>/lr
 ```
 
