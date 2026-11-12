@@ -33,6 +33,7 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from iml.config import ExperimentConfig
+from iml.imbalance import RotatingBalancedSampler, dataset_labels
 from iml.contract import (  # noqa: F401  (re-exported: the contract is part of iml.data's API)
     CLIP_DTYPE,
     CLIP_SAMPLES,
@@ -208,17 +209,35 @@ class SpectrogramDataset(Dataset):
 def make_loaders(
     datasets: dict[str, Dataset], cfg: ExperimentConfig, num_workers: int | None = None
 ) -> dict[str, DataLoader]:
-    """Build loaders for the given splits (``train`` shuffled + drop_last, others ordered)."""
+    """Build loaders for the given splits.
+
+    Training uses shuffled sampling by default. When rotating undersampling
+    is enabled, a balanced sampler rotates majority-class recordings
+    across epochs. Validation and test loaders remain unchanged.
+    """
     workers = cfg.num_workers if num_workers is None else num_workers
     loaders = {}
+
     for split, ds in datasets.items():
         train = split == "train"
+
+        sampler = None
+        if train and cfg.undersampling == "rotating":
+            sampler = RotatingBalancedSampler(
+                dataset_labels(ds),
+                seed=cfg.seed,
+            )
+
         loaders[split] = DataLoader(
             ds,
             batch_size=cfg.batch_size,
-            shuffle=train,
-            drop_last=train and len(ds) > cfg.batch_size,
+            shuffle=train and sampler is None,
+            sampler=sampler,
+            drop_last=(
+                train and sampler is None and len(ds) > cfg.batch_size
+            ),
             num_workers=workers,
             persistent_workers=workers > 0,
         )
+
     return loaders
