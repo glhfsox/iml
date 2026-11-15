@@ -41,14 +41,10 @@ The grid had 39 runs on `our_voices` and 15 on `v4`. It varied the learning rate
 batch size (32, 64) and pretraining. On `v4` the learning rates were 1.1e-3 and 3.1e-4. The extra
 trailing 1 only gives the runs new folder names; they are effectively 1e-3 and 3e-4.
 
-![Val EER against test EER for every grid run, our_voices and v4](plots/grid_val_vs_test.png)
-
-Each dot is one run, and the diagonal is test EER equal to val EER.
-
 - **On `our_voices`, val EER does not predict test EER** (Spearman ρ = −0.10). Runs with 0% val EER
   reach anywhere from 2% to 33% test EER. Model selection on this dataset is not meaningful.
-- **On `v4`, the relationship is moderate** (ρ = 0.50). Every run sits above the diagonal: test EER is
-  1 to 8 pp worse than the selected val EER.
+- **On `v4`, the relationship is moderate** (ρ = 0.50). In every run, test EER is 1 to 8 pp worse
+  than the selected val EER.
 
 Mean over the grid runs at each learning rate (min–max in brackets):
 
@@ -83,8 +79,6 @@ All four configs share pretrained=true, AdamW, 30 epochs, dropout 0.3 and batch 
 | B      | 1e-3 | cosine    | 0.05         | balanced     |
 | C      | 3e-4 | cosine    | 0.05         | balanced     |
 | D      | 1e-3 | cosine    | 0.05         | none         |
-
-![Val and test EER per seed for each config, v4 and our_voices](plots/seeds_val_test.png)
 
 Mean ± std over the 3 seeds, in %. "Val EER, last 10 ep." is the mean val EER over epochs 21–30. It
 uses no test data, and it shows whether the val score holds up or was one lucky epoch.
