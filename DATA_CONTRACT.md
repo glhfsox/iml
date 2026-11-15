@@ -26,13 +26,142 @@ audio/rec_0929b045510095ce_000480.npy,1
 audio/N174_174-168635-0003_000600.npy,0
 ```
 
-## Current unified training dataset
+## Main dataset: training_main
 
-`data/training_dataset_v2` is currently the **single source of unified data for binary model
-training**. Select it with `--data data/training_dataset_v2` or set
-`IML_DATA=data/training_dataset_v2`. The CLI has no default dataset and never merges folders.
+**`data/training_main` is the main dataset for two-stage fine-tuning: VoxCeleb backbone
+pretraining followed by binary allowed/invalid head tuning.** `data/training_dataset_v2`
+is outdated as the main training dataset and remains a historical reference and the parent
+of the inherited task clips. Select the main dataset with `--data data/training_main` or
+`IML_DATA=data/training_main`. The CLI has no default dataset and never merges folders.
+Changing the primary dataset does not change contract version 3.
 
-Counts recalculated from the CSVs on 2026-11-01:
+Counts checked against the manifests and provenance on **2026-11-15**:
+
+| Split | Allowed clips | Invalid clips | Total clips | Invalid / allowed |
+|---|---:|---:|---:|---:|
+| Train | 228 | 73,269 | 73,497 | 321.36 |
+| Validation | 28 | 6,395 | 6,423 | 228.39 |
+| Test | 28 | 12,750 | 12,778 | 455.36 |
+| **Total** | **284** | **92,414** | **92,698** | |
+
+Recalculate these counts and update this document and README whenever `training_main`
+data, labels, or split membership changes. Counts are a snapshot, not fixed contract requirements.
+
+### Recording sources and provenance
+
+| Source | Source recording IDs | Speaker IDs | Train clips | Val clips | Test clips | Total clips |
+|---|---:|---:|---:|---:|---:|---:|
+| Inherited v2 task data | 259 | 45 | 513 | 63 | 63 | 639 |
+| VoxCeleb1 | 13,730 | 789 | 26,289 | 2,279 | 4,553 | 33,121 |
+| VoxCeleb2 | 26,391 | 1,425 | 46,695 | 4,081 | 8,162 | 58,938 |
+| **Total** | **40,380** | **2,259** | **73,497** | **6,423** | **12,778** | **92,698** |
+
+These are metadata identity counts, not proof of unique real-world people across sources.
+Several clips can come from the same recording; clip counts do not measure independent
+recordings or unique audio duration.
+
+- **Inherited task data:** every v2 clip is preserved with its original waveform bytes,
+  filename, label, and split. M, P, MS, and D supply the 284 allowed clips. T supplies 71
+  invalid clips, and 40 external N speaker IDs supply another 284 invalid clips. Historical
+  recording/channel details and per-speaker counts remain below.
+- **VoxCeleb:** 40,121 retained originals from 2,214 speaker IDs, selected using
+  `data/sv_clean/sources.parquet` (`keep=True`, `source` equal to `vox1` or `vox2`) and
+  `speakers.parquet`. Original WAV/M4A members come from `ProgramComputer/voxceleb` on
+  Hugging Face. This is the curated SV selection, not the whole repository. TidyVoice is
+  excluded, and precomputed SV spectrograms are not used as the training inputs.
+  All 92,059 added clips have `allowed=0`; invalid is an access label, not a quality label.
+
+The external originals are decoded to 16 kHz mono int16 without loudness normalization.
+Recording-level VAD retains three-second windows with at least 60% speech, using the
+shared processing rules under Guarantees. Exact duplicate waveforms are excluded from
+the added clips. All 40,121 selected originals produced at least one retained clip in
+this build; no oversampling is stored in the dataset.
+
+The two-column binary manifests remain the model input index. Additional files describe
+the dataset without changing that format:
+
+- `clip_provenance.csv`: `path`, `allowed`, `split`, `speaker`, `recording_id`, `origin`,
+  `start_ms`, and `sha256_waveform`; external rows also include `origin_url`, `origin_member`,
+  `sha256_original`, and `original_sv_split`. Origins are `training_dataset_v2`, `vox1`, `vox2`.
+- `external_recordings.csv`: one row per selected external original, including source,
+  speaker, assigned split, candidate/retained clip counts, and any dropped reason.
+- `build_summary.json`: source fingerprints, seed, split targets, parent counts, and actual
+  completed counts. `progress.sqlite` is a build journal, not a training input.
+
+The standard binary loader ignores these sidecars. Stage-1 data selection must join the
+manifest to `clip_provenance.csv` by `path` to obtain origin and speaker labels. The stored
+`original_sv_split` is historical provenance; use the current manifest/`split` assignment.
+
+### Current split and its limits
+
+- New VoxCeleb speakers stay wholly in one split. Seed **42** targets **70/10/20 of original
+  recording duration within each corpus**, rather than a fixed proportion of clips.
+- External speaker counts are **1,550 train / 221 val / 443 test**: VoxCeleb1 contributes
+  552/79/158 and VoxCeleb2 contributes 998/142/285. External recording counts are
+  28,226/3,957/7,938, respectively.
+- Training windows use **1.5 s hops** (50% overlap); validation/test use **3 s hops**.
+  VAD, whole-speaker assignment, and these different hops make the final overall clip
+  shares **79.29% / 6.93% / 13.78%**. The 639 inherited clips keep their approximately
+  80/10/10 split without reassignment.
+- The 2026-11-15 audit found no manifest/provenance label or split mismatches, no repeated
+  manifest paths, no source recording IDs crossing splits, and no duplicate stored waveform
+  hashes. Every waveform passed the contract validator. Hash checks used stored provenance;
+  they do not establish absence of acoustic near duplicates or shared sessions.
+- Speaker separation applies to the added VoxCeleb IDs, not every inherited speaker:
+  **37 of 40 N IDs cross splits**. T is also present across splits. These examples measure
+  rejection partly on familiar impostors. Allowed M/P/MS/D identities intentionally occur
+  in all splits using different recordings, matching the fixed access list.
+- **39 VoxCeleb source video IDs cross splits**, involving 112 original recording rows
+  associated with different speaker IDs. Recording IDs are separate, but some background
+  and session conditions can be shared. Different IDs across corpora also do not guarantee
+  different real-world identities. Stronger evaluation would group shared videos together.
+- Validation and test each contain only **28 allowed clips** from **6 and 8 recording IDs**,
+  respectively. One false rejection changes clip-level FRR by about **3.57 percentage points**;
+  clips from a recording are correlated. More negatives do not improve this positive coverage.
+
+### Using the split for two-stage fine-tuning
+
+The current train/val/test assignment is the **shared outer split for the whole pipeline**.
+Only train recordings may update model parameters in either stage. Validation selects
+settings/checkpoints and the final binary threshold; test is reserved for final evaluation.
+This restriction also applies to self-supervised pretraining.
+
+1. **Stage 1: pretrain the spectrogram backbone.** Select the VoxCeleb portion of train by
+   `origin` (`vox1`/`vox2`). Use provenance speaker IDs as multiclass supervision, or an
+   explicitly chosen self-supervised objective. Using only `allowed=0` as the pretraining
+   target gives the model the trivial solution of always rejecting. Speaker-ID pretraining
+   needs an inner validation split of held-out recordings/videos of the training identities;
+   retain training examples for each such identity. The outer VoxCeleb validation/test
+   speakers are unseen and are unsuitable for ordinary closed-set classification accuracy
+   (embedding verification is a different evaluation). No pretraining script implements this
+   stage yet; `load_splits` and the current binary CLI require both binary classes in train/val.
+2. **Stage 2: tune the allowed/invalid head.** Transfer the pretrained backbone, replace the
+   pretraining classifier with a binary head, freeze the backbone, and train the head using
+   allowed and invalid examples from the same outer train split. A balanced selection has
+   **228 allowed + 228 invalid clips**; source/speaker-aware selection should retain local T
+   and inherited N negatives alongside any VoxCeleb negatives. Leave outer validation/test
+   unchanged and report FAR/FRR/EER and macro-F1, including FAR by negative source.
+
+[`src/iml/imbalance.py`](src/iml/imbalance.py) supplies `imbalance_report`, `balanced_indices`,
+`balanced_subset`, `freeze_backbone`, and `keep_frozen_bn_eval` for stage-2 building blocks.
+Its random balancing enforces class counts only, not source/speaker representation.
+With the current train manifest order and default `cfg.seed=42`, it selects 228 VoxCeleb
+negatives and no inherited negatives. Apply explicit negative selection for task coverage.
+
+The `fit` function in [`src/iml/train.py`](src/iml/train.py) reads
+`ExperimentConfig.finetune_from`: it loads the entire state dict from a compatible
+binary checkpoint, freezes the backbone, and tunes the existing head on a balanced training
+subset sampled once per run. Use `fit(cfg.with_overrides("finetune_from=<run>", "lr=1e-4"), loaders)`.
+It does not yet load just the backbone from a multiclass speaker checkpoint or replace that
+head. Those adaptations are still required for the intended two-stage pipeline; the existing
+binary-only two-phase recipe is not stage-1 VoxCeleb pretraining. See the
+[README workflow](README.md#two-stage-fine-tuning-with-training_main).
+
+## Historical dataset: training_dataset_v2 (outdated)
+
+V2 is retained for earlier experiments and provenance; use `training_main` for new work.
+All counts and sampling details in this section describe the inherited v2 subset only.
+The following counts were recalculated from its CSVs on 2026-11-01:
 
 | Speaker / class | Train clips | Val clips | Test clips | Total clips |
 |---|---:|---:|---:|---:|
@@ -49,15 +178,16 @@ Counts recalculated from the CSVs on 2026-11-01:
 There are **71 clips per valid person**, **639 clips overall**, and **259 distinct source
 recording IDs** inferred from filenames. Each clip is a stored 3-second excerpt, not an
 independent original recording. The N group contains 40 speaker IDs.
-**Recalculate these counts and update this document and README whenever new data arrives
-or data, labels, split membership, naming, or the contract changes.** These counts are a
-snapshot, not fixed contract requirements. Validate the dataset after changes.
+These historical counts describe v2 only; recount them if v2 itself changes. Validate any
+dataset after changes.
 
 `data/our_voices` is the broader team voice collection, including T negatives and 38 anonymous
 clips whose identities remain unresolved. It is not the unified training source; enrollment
 banks must use only verified allowed speakers with `allowed=1`. The `sv_clean`, `sv_nosil`
 and `sv_noise` datasets use speaker-identity Parquet manifests and precomputed spectrogram
-arrays, so they cannot be passed directly to the current binary training loader. I guess that currently, those Parquet files are used in a different branch (Artem one), we DO NOT use them in the main branch, as they have different manifests.
+arrays, so they cannot be passed directly to the current binary training loader. The
+`sv_clean` source/speaker metadata does supply provenance for the added VoxCeleb clips
+in `training_main`; this does not make the SV dataset format a binary-loader input.
 
 ## Naming conventions in the shared datasets
 
@@ -80,6 +210,9 @@ The CSV `allowed` value determines the class; filenames do not determine it.
   identify 80 clips as M and 64 as P. Another 38 clips (9 recording IDs) have no speaker
   mapping in the available manifests; do not infer their identity from the `rec_` prefix.
 - `N<speaker-id>_*` denotes external negative speakers in `training_dataset_v2`.
+- These inherited prefixes also occur in `training_main`. Added external clips use
+  `vox1_id<speaker>_<video>_<segment>_<start_ms>.npy` or the corresponding `vox2_` prefix;
+  use `clip_provenance.csv` for the authoritative speaker, recording, origin, and split.
 
 Keep the recording ID and offset when adding a speaker prefix, and update the split CSV
 paths alongside the filenames. Use source metadata or a verified recording-ID mapping to
@@ -108,10 +241,12 @@ an unbiased model. Training reads the chosen dataset only and does not merge the
 
 **Splits**
 - Each `path` exists, is unique and appears in exactly one split.
-- All clips cut from one source recording are in the same split (no clip-level leakage). Splits are by
-  recording, not by session/day: different recordings of the same day may land in different splits.
-- The builder targets about 70/15/15 of speech duration per speaker across train/val/test;
-  val and test only get recordings that yield at least one clip, and at least one recording stays in
+- All clips cut from one source recording are in the same split (no clip-level leakage).
+  Grouping follows the dataset-specific policy above; separation by session/day is not
+  guaranteed, and different recordings of the same day may land in different splits.
+- The general `iml-data build` command targets about 70/15/15 of speech duration per speaker
+  across train/val/test; this is not the `training_main` VoxCeleb assignment described above.
+  Val and test only get recordings that yield at least one clip, and at least one recording stays in
   train. A speaker with fewer than 3 usable recordings goes to train only. Recordings that yield no
   clip are dropped (`iml-data build` prints how many).
 - The builder generates train windows at 1.5 s hops (50 % overlap) and val/test windows at
@@ -123,8 +258,9 @@ an unbiased model. Training reads the chosen dataset only and does not merge the
 
 ## Producing and checking a dataset
 
-The original raw recordings and source CSVs for the existing shared datasets are unavailable
-in this checkout and mounted data directory. Telegram collector code exists in Git history
+The original raw recordings and source CSVs for the historical v2 task data are unavailable
+in this checkout and mounted data directory. Downloaded VoxCeleb originals are cached
+separately from the processed `training_main` clips. Telegram collector code exists in Git history
 but is absent from this checkout. Building a new dataset requires separately supplied raw
 recordings and labels; the stored clips cannot recover the original recordings in full.
 
@@ -166,15 +302,15 @@ noise, reverberation or pitch augmentation and does not normalize waveform loudn
 ## Using a dataset
 
 ```bash
-uv run iml-train --config app/models/configs/resnet18.json --data data/training_dataset_v2 --member <you> --topic <topic>
-export IML_DATA=data/training_dataset_v2                                         # or once per shell
+uv run iml-train --config app/models/configs/resnet18.json --data data/training_main --member <you> --topic <topic>
+export IML_DATA=data/training_main                                         # or once per shell
 ```
 
 - `load_splits` validates the folder and builds one `SpectrogramDataset` per split. It refuses a
   dataset whose train or val split lacks a class (FAR/FRR/EER and the decision threshold are
   undefined without both) and warns if test does (its FAR/FRR/EER are then NaN).
 - CSV paths resolve relative to the selected dataset folder. For example, `audio/file.npy`
-  resolves to `data/training_dataset_v2/audio/file.npy` when that folder is selected. Relative
+  resolves to `data/training_main/audio/file.npy` when that folder is selected. Relative
   `--data` paths resolve from the process working directory.
 - `ExperimentConfig.excerpt_sec` defaults to 3.0, matching stored clips. Training computes
   log-mel spectrograms and configured spectrogram normalization in memory without saving

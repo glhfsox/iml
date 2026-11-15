@@ -4,8 +4,11 @@ This notebook helps answer: **Is the data balanced? How many different recording
 clips represent? How does audio quality vary? What does the model receive?**
 
 It performs descriptive analysis: counts, distributions, audio-level measurements, duplicate
-checks, and visual inspection. The notebook works with v2,
-v3, v4, or another dataset in the same format. **The findings below cover v2 only.**
+checks, and visual inspection. The notebook works with `training_dataset_v2`,
+`training_main`, or another dataset in the same format. **`training_main` is now the main
+dataset for two-stage fine-tuning; v2 is outdated as the main training dataset.** See the
+[data contract](../../../DATA_CONTRACT.md#main-dataset-training_main) for its sources and split.
+**The findings below cover the historical v2 dataset only.**
 
 ## Terms used here
 
@@ -30,7 +33,7 @@ Open [recordings.ipynb](recordings.ipynb) with the `iml` environment. Select `DA
 in the configuration cell, then run all cells:
 
 ```python
-DATASET_NAME = "training_dataset_v2"  # or training_dataset_v3 / training_dataset_v4
+DATASET_NAME = "training_main"  # use training_dataset_v2 to reproduce the historical report
 ```
 
 The existing setting also accepts an `IML_EDA_DATASET` environment override; the notebook
@@ -47,14 +50,13 @@ notebooks/spdsslg/eda/
   recordings.ipynb
   reports/
     training_dataset_v2/
-    training_dataset_v3/
-    training_dataset_v4/
+    training_main/
 ```
 
 Each report folder contains five figures, summary tables, per-clip measurements,
 `observations.md`, and metadata recording the settings, software versions, seed, and input
 checksum. The checksum confirms that input data stayed unchanged. The v2 PNG figures and
-`observations.md` are included as the example report. Reports for v3/v4 are local and
+`observations.md` are included as the example report. Reports for training_main are local and
 gitignored; JSON metadata and CSV files are also ignored. Tables and per-clip measurements
 are displayed in the notebook. The figure links below point to the v2 example report.
 
